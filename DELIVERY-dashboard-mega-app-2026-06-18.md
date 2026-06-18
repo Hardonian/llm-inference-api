@@ -178,3 +178,41 @@ scripts/dashboardctl.sh logs 160
 - `scripts/dashboardctl.sh smoke` passed after Disk Rescue/Model Truth additions.
 - `scripts/dashboardctl.sh restart` passed and service health returned OK.
 - `ai-lab-dashboard-smoke.timer` is enabled and active.
+
+
+## 2026-06-18 Manual sudo disk cleanup completed by Scott
+
+Scott removed root-owned inactive swapfiles and one stale CUDA snap chunk. Verified target state externally and then rechecked live system:
+- `/mnt/ai-storage` improved to 742G used / 148G free / 84% used.
+- `/` remains 370G used / 77G free / 83% used.
+- swapfile remnants no longer exist at `/mnt/ai-storage/swapfile64` or `/mnt/ai-storage/swapfile-ai`.
+
+Note: original wildcard command should use `nemotron-3-super*` and `cuda-samples_*` if future snap chunks appear with suffixed names.
+
+
+## 2026-06-18 Workstation co-operator / MO iteration
+
+### Added
+- Workstation operator script: `/home/scott/ai-lab/scripts/bin/workstation-op.sh`.
+- Latest workstation report symlink: `/home/scott/ai-lab/reports/workstation-op-latest.md`.
+- Dashboard endpoints:
+  - `GET /api/workstation/op`
+  - `POST /api/workstation/op`
+- Dashboard Powerup: `🧭 Better Me / Workstation MO`.
+- Daily timer:
+  - `~/.config/systemd/user/ai-workstation-op.service`
+  - `~/.config/systemd/user/ai-workstation-op.timer`
+- Runbooks:
+  - `/home/scott/ai-lab/runbooks/MODUS_OPERANDI.md`
+  - `/home/scott/ai-lab/runbooks/PRODUCTIZATION_BACKLOG.md`
+
+### Hardened
+- Disk Rescue endpoint now caches heavy scan results for 5 minutes, reducing repeated UI/API response from ~24s to single-digit milliseconds when cached.
+
+### Verified
+- `workstation-op.sh` syntax and execution passed.
+- `ai-workstation-op.timer` active and enabled.
+- `/api/workstation/op` GET/POST passed.
+- `/api/disk/rescue` cache verified.
+- Dashboard restart passed.
+- Browser smoke passed.

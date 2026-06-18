@@ -57,7 +57,7 @@ PUBLIC_PATHS = {
     "/api/comfy/workflows", "/api/comfy/queue", "/api/comfy/models", "/api/comfy/nodes", "/api/comfy/view",
     "/api/upload", "/api/upscale", "/api/variations", "/api/cleanup", "/api/backup", "/api/heal", "/api/report",
     "/api/security/scan", "/api/security/audit", "/api/security/stats",
-    "/api/disk/rescue", "/api/models/truth", "/api/dashboard/smoke", "/api/dashboard/logs",
+    "/api/disk/rescue", "/api/models/truth", "/api/dashboard/smoke", "/api/dashboard/logs", "/api/workstation/op",
 }
 
 # Paths that require admin role

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run daily AI workstation operator report
+
+[Timer]
+OnCalendar=*-*-* 08:15:00
+Persistent=true
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

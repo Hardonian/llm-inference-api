@@ -1216,6 +1216,16 @@ def _du_children(path: str, depth: int = 1, limit: int = 30) -> List[Dict[str, A
 
 
 def _disk_rescue_report() -> Dict[str, Any]:
+    cache = DASHBOARD_STATE_DIR / "disk_rescue.json"
+    try:
+        if cache.exists() and time.time() - cache.stat().st_mtime < 300:
+            cached = _read_json_file(cache, {})
+            if cached:
+                cached["cached"] = True
+                cached["cache_age_sec"] = round(time.time() - cache.stat().st_mtime, 1)
+                return cached
+    except Exception:
+        pass
     paths = [p for p in ["/", "/mnt/ai-storage", "/home", "/opt", "/tmp"] if Path(p).exists()]
     disks = [_disk_usage_path(p) for p in paths]
     inactive_swap = []
@@ -1251,7 +1261,7 @@ def _disk_rescue_report() -> Dict[str, Any]:
         "snap_ollama_store": _du_children("/mnt/ai-storage/var/snap/ollama/common/models", 1, 10) if Path("/mnt/ai-storage/var/snap/ollama/common/models").exists() else [],
     }
     reclaim = sum(x["size"] for x in inactive_swap if not x.get("active")) + sum(x["size"] for x in stale_download_models) + sum(x["size"] for x in snap_chunks)
-    return {
+    payload = {
         "timestamp": _now_ts(),
         "disks": disks,
         "top_dirs": {p: _du_children(p, 1, 20) for p in ("/mnt/ai-storage", "/home/scott", "/opt", "/var") if Path(p).exists()},
@@ -1261,6 +1271,11 @@ def _disk_rescue_report() -> Dict[str, Any]:
         "estimated_reclaim_h": _bytes_fmt(reclaim),
         "sudo_needed": ["/mnt/ai-storage/swapfile64", "/mnt/ai-storage/swapfile-ai", "/mnt/ai-storage/var/lib/snapd/snaps/*"],
     }
+    try:
+        _write_json_file(cache, payload)
+    except Exception:
+        pass
+    return payload
 
 
 def _disk_rescue_execute(action: str) -> Dict[str, Any]:
@@ -1394,6 +1409,38 @@ async def api_dashboard_smoke_run():
 @app.get("/api/dashboard/logs")
 async def api_dashboard_logs(lines: int = 120):
     return await asyncio.to_thread(_dashboard_logs, lines)
+
+
+def _workstation_op_report() -> Dict[str, Any]:
+    script = "/home/scott/ai-lab/scripts/bin/workstation-op.sh"
+    latest = Path("/home/scott/ai-lab/reports/workstation-op-latest.md")
+    result = _run_command([script], timeout=240) if Path(script).exists() else {"ok": False, "stdout": "", "stderr": f"missing {script}", "returncode": 127}
+    report_path = result.get("stdout", "").strip().splitlines()[-1] if result.get("stdout") else str(latest)
+    content = ""
+    target = Path(report_path)
+    if target.exists():
+        content = target.read_text(errors="ignore")[-24000:]
+    elif latest.exists():
+        content = latest.read_text(errors="ignore")[-24000:]
+    return {
+        "ok": result.get("ok", False),
+        "report": report_path,
+        "latest": str(latest),
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+        "content": content,
+    }
+
+
+@app.get("/api/workstation/op")
+async def api_workstation_op_status():
+    latest = Path("/home/scott/ai-lab/reports/workstation-op-latest.md")
+    return {"exists": latest.exists(), "latest": str(latest), "content": latest.read_text(errors="ignore")[-24000:] if latest.exists() else ""}
+
+
+@app.post("/api/workstation/op")
+async def api_workstation_op_run():
+    return await asyncio.to_thread(_workstation_op_report)
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")

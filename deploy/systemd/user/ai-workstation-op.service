@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily AI workstation operator report
+After=ai-lab-dashboard.service
+Wants=ai-lab-dashboard.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/scott/ai-lab/scripts/bin/workstation-op.sh
+StandardOutput=append:/home/scott/ai-lab/reports/workstation-op-timer.log
+StandardError=append:/home/scott/ai-lab/reports/workstation-op-timer.log

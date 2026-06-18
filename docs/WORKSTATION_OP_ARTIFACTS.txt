@@ -1,0 +1,3 @@
+Workstation op script lives at /home/scott/ai-lab/scripts/bin/workstation-op.sh
+Latest report: /home/scott/ai-lab/reports/workstation-op-latest.md
+Timer: ai-workstation-op.timer

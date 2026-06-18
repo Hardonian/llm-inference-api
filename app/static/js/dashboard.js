@@ -266,6 +266,8 @@ const API = {
   smokeStatus() { return this.request('/api/dashboard/smoke'); },
   runSmoke() { return this.request('/api/dashboard/smoke', { method: 'POST' }); },
   dashboardLogs(lines = 120) { return this.request(`/api/dashboard/logs?lines=${lines}`); },
+  workstationOp() { return this.request('/api/workstation/op', { method: 'POST' }); },
+  workstationOpStatus() { return this.request('/api/workstation/op'); },
 
   // Prompt
   improvePrompt(prompt, mode) { return this.request('/api/improve-prompt', { method: 'POST', body: JSON.stringify({ prompt, mode }) }); },
@@ -1959,6 +1961,7 @@ const PowerupsPanel = {
       { id: 'repos', icon: '🧬', title: 'Repo Radar', desc: 'List local repos/workspaces worth productizing or fixing next.', run: 'repos' },
       { id: 'private', icon: '🔒', title: 'Private Creations', desc: 'Summarize local/private creations footprint without uploading anything.', run: 'private' },
       { id: 'report', icon: '📊', title: 'Daily Report', desc: 'Open the workstation daily report output.', run: 'report' },
+      { id: 'op', icon: '🧭', title: 'Better Me / Workstation MO', desc: 'Generate a grounded operator report: fix, harden, ideate, and next money/time moves.', run: 'op' },
     ];
     UI.modal('⚡ Superpowers / Cheat Codes', `
       <div class="panel-content">
@@ -1997,6 +2000,7 @@ const PowerupsPanel = {
       else if (kind === 'repos') result = await API.coopRepos();
       else if (kind === 'private') result = await API.privateCreations();
       else if (kind === 'report') result = await API.report();
+      else if (kind === 'op') result = await API.workstationOp();
       else result = await API.coopRun(kind);
       write(result);
       logActivity(`Powerup: ${kind}`, 'success', 10);
