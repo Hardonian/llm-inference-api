@@ -1,0 +1,24 @@
+[Unit]
+Description=AI Lab Command Center Dashboard (llm-inference-api)
+Documentation=file:/home/scott/ai-workspace/repos/llm-inference-api/DELIVERY-dashboard-mega-app-2026-06-18.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/scott/ai-workspace/repos/llm-inference-api
+Environment=PYTHONUNBUFFERED=1
+Environment=COMFYUI_ROOT=/opt/ai/comfyui/ComfyUI
+ExecStart=/home/scott/ai-workspace/repos/llm-inference-api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/home/scott/ai-lab /home/scott/ai-workspace/repos/llm-inference-api /opt/ai/comfyui/ComfyUI/input /opt/ai/comfyui/ComfyUI/output /opt/ai/comfyui/ComfyUI/models
+
+[Install]
+WantedBy=default.target

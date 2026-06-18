@@ -1,0 +1,11 @@
+[Unit]
+Description=AI Lab Dashboard smoke test
+After=ai-lab-dashboard.service
+Wants=ai-lab-dashboard.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/scott/ai-workspace/repos/llm-inference-api
+ExecStart=/home/scott/ai-workspace/repos/llm-inference-api/scripts/dashboardctl.sh smoke
+StandardOutput=append:/home/scott/ai-lab/dashboard/smoke-timer.log
+StandardError=append:/home/scott/ai-lab/dashboard/smoke-timer.log

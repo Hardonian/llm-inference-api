@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Lab Admin</title>
+<link rel="stylesheet" href="/static/css/admin.css" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">AI</div>
+      <div>
+        <div style="font-weight:900;font-size:18px">AI Lab</div>
+        <div style="font-size:11px;color:var(--muted);letter-spacing:0.6px">COMMAND CENTER</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="xp-pill" id="xp-pill" title="Points & level">0 XP</div>
+      <button class="btn primary" onclick="location.href='/dashboard'">Dashboard</button>
+      <a class="btn" href="http://localhost:8188" target="_blank">ComfyUI</a>
+      <button class="btn" onclick="toggleTheme()">Theme</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <section class="panel">
+      <h2>Profile</h2>
+      <div class="profile">
+        <div class="avatar">S</div>
+        <div>
+          <div style="font-weight:900">Scott</div>
+          <div class="mono" style="color:var(--muted);font-size:12px">Level <span id="level">1</span></div>
+          <div style="font-size:12px;color:var(--muted)"><span id="xp">0</span> / <span id="next">100</span> XP</div>
+        </div>
+      </div>
+      <div class="badges" id="badges"></div>
+    </section>
+
+    <section class="panel">
+      <h2>GPUs</h2>
+      <div class="grid" id="gpu-cards"><div class="card">Loading...</div></div>
+    </section>
+    <section class="panel">
+      <h2>Ollama Lanes</h2>
+      <div class="grid" id="ollama-grid"><div class="card">Loading...</div></div>
+    </section>
+
+    <section class="panel full">
+      <h2>Services</h2>
+      <div class="grid" id="services-grid"></div>
+    </section>
+
+    <section class="panel full">
+      <h2>Prompt Studio (Gamified)</h2>
+      <div class="row" style="gap:10px;align-items:flex-start">
+        <div class="field">
+          <label style="color:var(--muted);font-size:12px">Mode</label>
+          <select id="mode" class="select">
+            <option>cinematic</option>
+            <option>realistic-photo</option>
+            <option>private-adult-fiction</option>
+            <option>fashion</option>
+            <option>fitness</option>
+            <option>office-professional</option>
+            <option>anime</option>
+            <option>product-shot</option>
+          </select>
+          <label style="color:var(--muted);font-size:12px;display:block;margin-top:8px">Workflow</label>
+          <select id="workflow" class="select">
+            <option>default.json</option>
+            <option>txt2img.json</option>
+            <option>img2img.json</option>
+            <option>upscale.json</option>
+          </select>
+        </div>
+        <div class="field">
+          <label style="color:var(--muted);font-size:12px">Prompt</label>
+          <textarea id="prompt" class="textarea" placeholder="Describe your vision..."></textarea>
+        </div>
+        <div class="field" style="max-width:260px">
+          <button class="btn primary" onclick="submitPrompt('optimize')">Optimize + Queue</button>
+          <button class="btn" style="width:100%;margin-top:8px" onclick="submitPrompt('direct')">Direct Queue</button>
+          <button class="btn" style="width:100%;margin-top:8px" onclick="improvePrompt()">Improve Prompt</button>
+          <div class="hint">+15 XP per submit, +10 XP per improve</div>
+          <button class="btn" style="width:100%;margin-top:8px" onclick="sendToGenerate()">Send to generate</button>
+          </div>
+      </div>
+    </section>
+
+    <section class="panel full">
+      <h2>Upload / Drag & Drop</h2>
+      <div class="dropzone" id="dropzone">
+        <div class="drop-inner">
+          <div style="font-size:28px">Upload to workspace</div>
+          <div style="color:var(--muted);font-size:13px">Drop images, JSON workflows, or prompts</div>
+          <input type="file" id="fileInput" multiple />
+          <button class="btn primary" onclick="document.getElementById('fileInput').click()">Choose files</button>
+        </div>
+      </div>
+      <div class="hud" style="margin-top:10px">
+        <div class="kpi"><div class="l">Queued uploads</div><div class="v" id="queue-count">0</div></div>
+        <div class="kpi"><div class="l">Last upload</div><div class="v" id="last-upload">—</div></div>
+      </div>
+    </section>
+
+    <section class="panel full">
+      <h2>Safeguard & Intent Scan</h2>
+      <div class="row" style="gap:10px;align-items:flex-start">
+        <div class="field">
+          <label style="color:var(--muted);font-size:12px">Scan text</label>
+          <textarea id="scan-text" class="textarea" placeholder="Paste prompt or notes to scan..."></textarea>
+        </div>
+        <div class="field" style="max-width:260px">
+          <button class="btn primary" onclick="runScan()">Scan locally</button>
+          <button class="btn" style="width:100%;margin-top:8px" onclick="autoPolicy()">Auto-policy</button>
+          <div class="hint">Local-only check. No upload.</div>
+        </div>
+      </div>
+      <div id="scan-report" class="card" style="margin-top:10px;display:none"></div>
+    </section>
+  </div>
+</div>
+
+<script src="/static/js/admin.js"></script>
+</body>
+</html>
