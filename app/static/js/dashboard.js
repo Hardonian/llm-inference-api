@@ -268,6 +268,12 @@ const API = {
   dashboardLogs(lines = 120) { return this.request(`/api/dashboard/logs?lines=${lines}`); },
   workstationOp() { return this.request('/api/workstation/op', { method: 'POST' }); },
   workstationOpStatus() { return this.request('/api/workstation/op'); },
+  agentCommand(directive) { return this.request('/api/agent/command', { method: 'POST', body: JSON.stringify({ directive }) }); },
+  improvements() { return this.request('/api/agent/improvements'); },
+  revenue() { return this.request('/api/revenue/status'); },
+  predictions() { return this.request('/api/system/predictions'); },
+  workflowPacks() { return this.request('/api/workflows/productize'); },
+  workflowPack(slug) { return this.request(`/api/workflows/productize/${slug}`); },
 
   // Prompt
   improvePrompt(prompt, mode) { return this.request('/api/improve-prompt', { method: 'POST', body: JSON.stringify({ prompt, mode }) }); },
@@ -1335,8 +1341,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderOptimizationCoach();
   await fetchCooperator();
   await fetchMoneyAndReposAndCreations();
+  EpicCommandCenter?.init();
+  CommandPalette?.init();
 
-  // Start polling fallback
+  // Setup UI event listeners
   startPolling();
   startUptimeCounter();
 
@@ -2123,6 +2131,7 @@ function startThreatMonitor() {
 // EXPORT GLOBALS
 // ========================================
 window.UI = UI;
+window.API = API;
 window.GPUPanel = GPUPanel;
 window.LaneManager = LaneManager;
 window.ComfyManager = ComfyManager;
@@ -2138,7 +2147,10 @@ window.MCPAgentPanel = MCPAgentPanel;
 window.WorkflowsPanel = WorkflowsPanel;
 window.ViewsPanel = ViewsPanel;
 window.fetchJobsAndAchievements = fetchJobsAndAchievements;
+window.fetchInitialData = fetchInitialData;
 window.fetchCooperator = fetchCooperator;
+window.logActivity = logActivity;
+window.runBriefing = runBriefing;
 window.handleQuickAction = handleQuickAction;
 window.startBatch = window.startBatch;
 window.SecurityEngine = SecurityEngine;

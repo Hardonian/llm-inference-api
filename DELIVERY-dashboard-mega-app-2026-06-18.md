@@ -216,3 +216,35 @@ Note: original wildcard command should use `nemotron-3-super*` and `cuda-samples
 - `/api/disk/rescue` cache verified.
 - Dashboard restart passed.
 - Browser smoke passed.
+
+
+## 2026-06-18 Epic / breaker ratchet-up pass
+
+### Added
+- `app/static/js/epic.js` breaker module.
+- Global command palette UI in `app/templates/dashboard.html`.
+- 🔮 Epic Command Center panel with:
+  - Revenue readiness score
+  - Disk forecast risk + days-to-full
+  - Self-improvement queue count
+  - Productizable workflow pack count
+- Backend endpoints:
+  - `POST /api/agent/command`
+  - `GET /api/agent/improvements`
+  - `GET /api/revenue/status`
+  - `GET /api/system/predictions`
+  - `GET /api/workflows/productize`
+  - `GET /api/workflows/productize/{slug}`
+- Disk trend history cache at `/home/scott/ai-lab/dashboard/disk_history.json`.
+- Easter-egg cheat codes in agent router.
+
+### Changed
+- `app/static/js/dashboard.js` exports `API`, `fetchInitialData`, `logActivity`, `runBriefing` globally for epic module.
+- `_disk_summary()` now includes `/mnt/ai-storage`.
+- Security public paths updated for new endpoints.
+
+### Verified
+- Syntax checks passed for Python + JS.
+- All new API endpoints returned 200.
+- Agent command correctly routed `money and revenue` to revenue intent.
+- Browser smoke passed including new Epic Command Center and Command Palette checks.

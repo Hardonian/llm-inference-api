@@ -58,6 +58,7 @@ PUBLIC_PATHS = {
     "/api/upload", "/api/upscale", "/api/variations", "/api/cleanup", "/api/backup", "/api/heal", "/api/report",
     "/api/security/scan", "/api/security/audit", "/api/security/stats",
     "/api/disk/rescue", "/api/models/truth", "/api/dashboard/smoke", "/api/dashboard/logs", "/api/workstation/op",
+    "/api/agent/command", "/api/agent/improvements", "/api/revenue/status", "/api/system/predictions", "/api/workflows/productize", "/api/workflows/productize/*",
 }
 
 # Paths that require admin role

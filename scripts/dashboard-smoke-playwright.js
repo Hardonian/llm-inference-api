@@ -87,6 +87,23 @@ const { chromium } = require('/home/scott/node_modules/playwright');
   if (!/paths|private|dashboard|price/i.test(powerOutput)) throw new Error(`Powerup output missing expected content: ${powerOutput.slice(0, 220)}`);
   console.log('Powerup run: OK');
 
+  // Epic Command Center
+  await page.locator('#epic-revenue-btn').waitFor({ state: 'attached', timeout: 10000 });
+  await page.evaluate(() => document.querySelector('#epic-revenue-btn')?.click());
+  await page.waitForTimeout(1200);
+  const epicOutput = await page.locator('#epic-output').textContent();
+  if (!epicOutput || epicOutput.length < 20) throw new Error('Epic Command Center output empty');
+  console.log('Epic Command Center OK');
+
+  // Command palette open/close
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(400);
+  const hidden = await page.locator('#command-palette').evaluate(el => el.classList.contains('hidden'));
+  if (hidden) throw new Error('Command palette did not open');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+  console.log('Command Palette OK');
+
   await page.waitForTimeout(1000);
   if (errors.length) throw new Error('Browser errors:\n' + errors.join('\n'));
   await browser.close();

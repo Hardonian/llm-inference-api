@@ -5,6 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Lab Command Center</title>
   <link rel="stylesheet" href="/static/css/dashboard.css" />
+  <style>
+    /* Epic / Command Palette styles */
+    .command-palette { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); width: min(780px, 92vw); z-index: 1000; background: var(--panel-bg, rgba(20,22,30,0.98)); border: 1px solid var(--border, rgba(255,255,255,0.1)); border-radius: 12px; box-shadow: 0 24px 80px rgba(0,0,0,0.6); backdrop-filter: blur(16px); padding: 12px; }
+    .command-palette-inner { display: flex; align-items: center; gap: 10px; }
+    .command-palette-prefix { color: var(--accent, #00f2ff); font-size: 20px; font-weight: 700; }
+    .command-palette input { flex: 1; background: transparent; border: none; color: var(--text, #fff); font-size: 16px; outline: none; padding: 8px; }
+    .command-palette-results { max-height: 360px; overflow: auto; margin-top: 8px; }
+    .command-palette-item { display: flex; justify-content: space-between; padding: 10px 12px; border-radius: 8px; cursor: pointer; color: var(--text, #fff); }
+    .command-palette-item:hover, .command-palette-item.selected { background: rgba(255,255,255,0.08); }
+    .command-palette-shortcut { color: var(--muted, #8a8f98); font-size: 12px; }
+    .epic-panel { border-left: 3px solid var(--accent, #00f2ff); }
+    .epic-card { background: rgba(255,255,255,0.04); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 10px; padding: 14px; }
+    .epic-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted, #8a8f98); margin-bottom: 6px; }
+    .epic-value { font-size: 26px; font-weight: 700; color: var(--text, #fff); }
+    .epic-sub { font-size: 12px; color: var(--muted, #8a8f98); margin-top: 4px; }
+    .badge.pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+  </style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
@@ -43,6 +61,16 @@
         <a class="btn" href="http://localhost:3002" target="_blank">Open WebUI</a>
       </div>
     </header>
+
+    <!-- Global Command Palette -->
+    <div id="command-palette" class="command-palette hidden">
+      <div class="command-palette-inner">
+        <div class="command-palette-prefix">⌘</div>
+        <input id="command-palette-input" type="text" placeholder="Type a command or ask the machine... (e.g. 'heal', 'money', 'disk rescue', 'workflow pack')" autocomplete="off" />
+        <button class="btn small" id="command-palette-close">Esc</button>
+      </div>
+      <div id="command-palette-results" class="command-palette-results"></div>
+    </div>
 
     <main class="layout">
       <!-- Left Column: Status & GPUs -->
@@ -216,6 +244,44 @@
           </div>
         </section>
 
+        <!-- Epic Command Center HUD -->
+        <section class="panel epic-panel">
+          <div class="panel-header">
+            <h2>🔮 Epic Command Center</h2>
+            <span class="badge pulse">breaker mode</span>
+          </div>
+          <div class="epic-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px">
+            <div class="epic-card" id="revenue-card">
+              <div class="epic-label">Revenue Readiness</div>
+              <div class="epic-value" id="revenue-score">—</div>
+              <div class="epic-sub" id="revenue-next">Run revenue scan</div>
+            </div>
+            <div class="epic-card" id="prediction-card">
+              <div class="epic-label">Disk Forecast</div>
+              <div class="epic-value" id="prediction-risk">—</div>
+              <div class="epic-sub" id="prediction-days">—</div>
+            </div>
+            <div class="epic-card" id="improve-card">
+              <div class="epic-label">Self-Improve Queue</div>
+              <div class="epic-value" id="improve-count">—</div>
+              <div class="epic-sub" id="improve-top">—</div>
+            </div>
+            <div class="epic-card" id="packs-card">
+              <div class="epic-label">Productizable Packs</div>
+              <div class="epic-value" id="packs-count">—</div>
+              <div class="epic-sub" id="packs-top">—</div>
+            </div>
+          </div>
+          <div class="epic-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn primary" id="epic-revenue-btn">💰 Revenue</button>
+            <button class="btn" id="epic-predict-btn">📈 Predictions</button>
+            <button class="btn" id="epic-improve-btn">🚀 Improve</button>
+            <button class="btn" id="epic-packs-btn">📦 Packs</button>
+            <button class="btn" id="epic-command-btn">⌘ Command</button>
+          </div>
+          <div id="epic-output" class="log-output" style="max-height:300px;overflow:auto;margin-top:12px"></div>
+        </section>
+
         <!-- Real Jobs / Outputs -->
         <section class="panel">
           <div class="panel-header">
@@ -370,6 +436,7 @@
     <div class="modal" id="modal"></div>
   </div>
 
+  <script src="/static/js/epic.js"></script>
   <script type="module" src="/static/js/dashboard.js"></script>
 </body>
 </html>

@@ -23,3 +23,20 @@
 - Added `/home/scott/ai-lab/runbooks/MODUS_OPERANDI.md`.
 - Added `/home/scott/ai-lab/runbooks/PRODUCTIZATION_BACKLOG.md`.
 - Hardened Disk Rescue with a 5-minute cache so heavy scans do not slow repeated dashboard/UI calls.
+
+
+## 2026-06-18 - Epic / breaker dashboard ratchet
+
+- Added global command palette (Ctrl+K) with natural-language agent routing.
+- Added 🔮 Epic Command Center panel with live revenue readiness, disk forecast, self-improve queue, and workflow pack counters.
+- Added `/api/agent/command` natural-language router (local, no cloud).
+- Added `/api/agent/improvements` self-improvement suggestions derived from live state.
+- Added `/api/revenue/status` money-path readiness scoring.
+- Added `/api/system/predictions` disk-trend forecasting.
+- Added `/api/workflows/productize` workflow/sample output pack discovery.
+- Added `/api/workflows/productize/{slug}` single-pack export with markdown landing copy.
+- Added `app/static/js/epic.js` breaker module, loaded alongside dashboard.
+- Added command-palette and epic-panel inline styles.
+- Added disk-trend history persistence (`/home/scott/ai-lab/dashboard/disk_history.json`).
+- Added `/mnt/ai-storage` to system snapshot disk summary for accurate forecasting.
+- Added Easter-egg cheat codes: "god mode", "break all the rules", "unlock epic", "sudo make me a sandwich".

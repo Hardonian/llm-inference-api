@@ -109,6 +109,232 @@ def _money_snapshot() -> Dict[str, Any]:
     return {"updated_at": _now_ts(), "paths": _default_money_paths()}
 
 
+# ============================================================
+# EPIC / BREAKER POWERUPS: agent command, self-improvement, revenue, predictions
+# ============================================================
+
+def _agent_command_router(directive: str) -> Dict[str, Any]:
+    """Natural-language operator router. No LLM cloud call; deterministic local intent matching."""
+    d = (directive or "").lower().strip()
+    if d in {"god mode", "break all the rules", "unlock epic", "sudo make me a sandwich"}:
+        return {
+            "directive": directive,
+            "intent": "easter_egg",
+            "timestamp": _now_ts(),
+            "result": {
+                "message": "Breaker mode engaged. Hidden superpowers: Ctrl+K command palette, /api/agent/command, /api/revenue/status, /api/system/predictions, /api/workflows/productize.",
+                "cheat_codes": ["disk rescue", "model truth", "heal", "money", "briefing", "repos", "private creations", "workflows", "improve", "predict"],
+                "next_move": "Type 'money' in the command palette or click 🔮 Epic Command Center."
+            }
+        }
+    intent = "unknown"
+    args = {}
+    if any(w in d for w in ["disk", "space", "full", "cleanup", "rescue"]):
+        intent = "disk_rescue"
+    elif any(w in d for w in ["model", "duplicate", "dedupe", "models"]):
+        intent = "model_truth"
+    elif any(w in d for w in ["heal", "fix", "repair", "recover", "restart"]):
+        intent = "self_heal"
+    elif any(w in d for w in ["money", "revenue", "monetize", "sell", "productize"]):
+        intent = "revenue"
+    elif any(w in d for w in ["brief", "status", "report", "sitrep"]):
+        intent = "briefing"
+    elif any(w in d for w in ["repos", "repository", "projects", "codebase"]):
+        intent = "repos"
+    elif any(w in d for w in ["creations", "private", "images", "output", "comfy output"]):
+        intent = "private_creations"
+    elif any(w in d for w in ["workflow", "comfy workflow", "pack"]):
+        intent = "workflow_productize"
+    elif any(w in d for w in ["improve", "better", "smarter", "upgrade", "optimize"]):
+        intent = "self_improve"
+    elif any(w in d for w in ["predict", "forecast", "will disk", "trend"]):
+        intent = "predictions"
+    elif any(w in d for w in ["gpu", "nvidia", "vram"]):
+        intent = "gpu_status"
+    elif any(w in d for w in ["logs", "journal"]):
+        intent = "logs"
+    else:
+        args["fallback"] = True
+
+    executed = {}
+    if intent == "disk_rescue":
+        executed = {"disk_rescue": _disk_rescue_report()}
+    elif intent == "model_truth":
+        executed = {"model_truth": _model_truth_report()}
+    elif intent == "self_heal":
+        executed = {"self_heal": _self_heal_actor()}
+    elif intent == "revenue":
+        executed = {"revenue": _revenue_dashboard(), "money_leads": _money_snapshot()}
+    elif intent == "briefing":
+        executed = {"briefing": _cooperator_briefing()}
+    elif intent == "repos":
+        executed = {"repos": _cooperator_repos_list()}
+    elif intent == "private_creations":
+        executed = {"private_creations": _private_creations_summary()}
+    elif intent == "workflow_productize":
+        executed = {"workflow_productize": _workflow_productize_inventory()}
+    elif intent == "self_improve":
+        executed = {"self_improve": _self_improvement_suggestions()}
+    elif intent == "predictions":
+        executed = {"predictions": _predictive_monitoring()}
+    elif intent == "gpu_status":
+        executed = {"gpu_status": _system_snapshot().get("gpu", {})}
+    elif intent == "logs":
+        executed = {"logs": _dashboard_logs(80)}
+    else:
+        executed = {"help": "Try: disk rescue, model truth, heal, money, briefing, repos, private creations, workflows, improve, predict"}
+
+    return {
+        "directive": directive,
+        "intent": intent,
+        "timestamp": _now_ts(),
+        "result": executed,
+    }
+
+
+def _cooperator_repos_list() -> Dict[str, Any]:
+    base = Path("/home/scott/ai-workspace/repos")
+    repos = []
+    if base.exists():
+        for p in sorted(base.iterdir()):
+            if p.is_dir():
+                git = p / ".git"
+                meta = {"name": p.name, "path": str(p), "is_git": git.exists()}
+                if git.exists():
+                    try:
+                        head = (git / "HEAD").read_text().strip()
+                        meta["head_ref"] = head.split("/")[-1]
+                    except Exception:
+                        pass
+                repos.append(meta)
+    return {"repos": repos, "base": str(base)}
+
+
+def _revenue_dashboard() -> Dict[str, Any]:
+    """Track active money opportunities + add sales-ready scoring."""
+    paths = _default_money_paths()
+    report = _system_snapshot()
+    services = report.get("services", []) or []
+    svc_ok = {s["name"]: s.get("ok", False) for s in services}
+    total_score = 0
+    for p in paths:
+        score = 50
+        if "dashboard" in p["lever"].lower(): score += 15
+        if "ComfyUI" in p["lever"]: score += 15 if svc_ok.get("comfyui") else 0
+        if "Ollama" in p["lever"]: score += 15 if svc_ok.get("ollama") else 0
+        p["readiness_score"] = min(score, 100)
+        total_score += p["readiness_score"]
+    avg = total_score // len(paths) if paths else 0
+    return {
+        "updated_at": _now_ts(),
+        "overall_readiness": avg,
+        "paths": sorted(paths, key=lambda x: x["readiness_score"], reverse=True),
+        "next_action": "Ship Private AI Lab Dashboards (highest readiness)" if avg >= 70 else "Stabilize GPU lanes and model stores first",
+    }
+
+
+def _self_improvement_suggestions() -> Dict[str, Any]:
+    """Dashboard looks at its own logs and state and suggests concrete improvements."""
+    snap = _system_snapshot()
+    suggestions = []
+    disk_high = [d for d in snap.get("disk", {}).get("paths", []) if d.get("percent", 0) >= 80]
+    if disk_high:
+        suggestions.append({"area": "disk", "impact": "high", "title": "Add automatic disk pressure prediction", "why": "Path(s) >=80% full; trend-based alerts prevent outages.", "action": "Implement /api/system/predictions with daily growth rate.", "estimated_hours": 2})
+    services_down = [s["name"] for s in snap.get("services", []) if not s.get("ok")]
+    if services_down:
+        suggestions.append({"area": "reliability", "impact": "high", "title": "Tighten watchdog restart thresholds", "why": f"Services currently down: {services_down}", "action": "Add per-service restart policy + backoff in _self_heal_actor.", "estimated_hours": 3})
+    if not _read_json_file(DASHBOARD_STATE_DIR / "smoke.json", {}).get("last_ok"):
+        suggestions.append({"area": "quality", "impact": "med", "title": "Surface last smoke result in dashboard header", "why": "Operators need at-a-glance confidence.", "action": "Read smoke.json in /api/system/watchdog and badge the UI.", "estimated_hours": 1})
+    # Always give at least one product suggestion
+    suggestions.append({"area": "money", "impact": "high", "title": "Auto-generate workflow product pages", "why": "ComfyUI outputs exist; packaging them is manual friction.", "action": "Build /api/workflows/productize to export packs.", "estimated_hours": 4})
+    suggestions.append({"area": "ux", "impact": "med", "title": "Add command palette (Ctrl+K)", "why": "Power users need sub-1-second access to every action.", "action": "Implement global keyboard-driven command palette.", "estimated_hours": 2})
+    suggestions.append({"area": "ux", "impact": "med", "title": "Make particle background react to GPU load", "why": "Visual feedback makes the lab feel alive.", "action": "Pass GPU load to canvas renderer via WebSocket.", "estimated_hours": 1})
+    return {"updated_at": _now_ts(), "suggestions": suggestions}
+
+
+def _predictive_monitoring() -> Dict[str, Any]:
+    """Predict disk and service trouble before it happens."""
+    snap = _system_snapshot()
+    predictions = []
+    history = _read_json_file(DASHBOARD_STATE_DIR / "disk_history.json", [])
+    for path in ["/", "/mnt/ai-storage"]:
+        usage = next((d for d in snap.get("disk", {}).get("paths", []) if d.get("path") == path), None)
+        if not usage:
+            continue
+        hist = [h for h in history if h.get("path") == path]
+        pct = usage.get("percent", 0)
+        trend = 0
+        days_to_full = None
+        if len(hist) >= 2:
+            first, last = hist[0], hist[-1]
+            dt = last.get("ts", _now_ts()) - first.get("ts", _now_ts())
+            dp = last.get("percent", pct) - first.get("percent", pct)
+            if dt > 0:
+                trend = dp / (dt / 86400)  # percent per day
+                if trend > 0 and pct < 100:
+                    days_to_full = (100 - pct) / trend
+        predictions.append({
+            "path": path,
+            "percent": pct,
+            "trend_pct_per_day": round(trend, 3),
+            "days_to_full": round(days_to_full, 1) if days_to_full else None,
+            "risk": "critical" if (days_to_full and days_to_full < 7) else "high" if pct >= 85 else "med" if pct >= 75 else "low",
+        })
+    # Persist history
+    try:
+        for path in ["/", "/mnt/ai-storage"]:
+            usage = next((d for d in snap.get("disk", {}).get("paths", []) if d.get("path") == path), None)
+            if usage:
+                history.append({"ts": _now_ts(), "path": path, "percent": usage.get("percent", 0)})
+        # keep last 90 days
+        history = history[-2000:]
+        _write_json_file(DASHBOARD_STATE_DIR / "disk_history.json", history)
+    except Exception:
+        pass
+    return {"updated_at": _now_ts(), "predictions": predictions}
+
+
+def _workflow_productize_inventory() -> Dict[str, Any]:
+    """Find ComfyUI workflows and output galleries ready to become products."""
+    workflows = []
+    sample_outputs = []
+    if WORKFLOW_ROOT.exists():
+        for fp in sorted(WORKFLOW_ROOT.rglob("*.json")):
+            try:
+                data = json.loads(fp.read_text())
+                nodes = len(data) if isinstance(data, dict) else 0
+                workflows.append({"name": fp.stem, "path": str(fp), "nodes": nodes, "size": fp.stat().st_size})
+            except Exception:
+                workflows.append({"name": fp.stem, "path": str(fp), "nodes": 0, "size": fp.stat().st_size})
+    if COMFYUI_OUTPUT_DIR.exists():
+        for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp"):
+            for fp in sorted(COMFYUI_OUTPUT_DIR.rglob(ext)):
+                try:
+                    stat = fp.stat()
+                    sample_outputs.append({"path": str(fp), "size": stat.st_size, "mtime": stat.st_mtime})
+                except Exception:
+                    pass
+    sample_outputs.sort(key=lambda x: x["mtime"], reverse=True)
+    packs = []
+    for w in workflows[:10]:
+        packs.append({
+            "workflow": w["name"],
+            "samples": [s["path"] for s in sample_outputs[:6]],
+            "estimated_price": 49 if w["nodes"] < 20 else 79,
+            "tagline": f"{w['name']} - ready-to-run ComfyUI workflow",
+            "product_url_slug": w["name"].lower().replace(" ", "-").replace("_", "-"),
+        })
+    return {
+        "updated_at": _now_ts(),
+        "workflow_count": len(workflows),
+        "sample_count": len(sample_outputs),
+        "top_workflows": workflows[:10],
+        "ready_packs": packs[:5],
+        "next_step": "Export first pack with /api/workflows/productize/{slug}",
+    }
+
+
+
 def _cooperator_briefing() -> Dict[str, Any]:
     snap = _system_snapshot()
     services_down = [s["name"] for s in snap.get("services", []) if not s.get("ok")]
@@ -213,7 +439,7 @@ def _self_alive() -> Dict[str, Any]:
 
 def _disk_summary() -> Dict[str, Any]:
     out = []
-    for p in [Path("/"), Path("/home"), Path("/opt"), COMFYUI_OUTPUT_DIR, Path("/home/scott/ai-lab")]:
+    for p in [Path("/"), Path("/mnt/ai-storage"), Path("/home"), Path("/opt"), COMFYUI_OUTPUT_DIR, Path("/home/scott/ai-lab")]:
         try:
             usage = shutil.disk_usage(str(p))
             out.append({"path": str(p), "used_gb": round(usage.used/1024**3, 1), "free_gb": round(usage.free/1024**3, 1), "percent": int(usage.used/usage.total*100)})
@@ -956,6 +1182,68 @@ async def api_cooperator_repos():
 @app.get("/api/private-creations")
 async def api_private_creations():
     return await asyncio.to_thread(_private_creations_summary)
+
+
+# Epic / breaker API surface
+@app.post("/api/agent/command")
+async def api_agent_command(request: Request):
+    body = {}
+    try: body = await request.json()
+    except Exception: pass
+    directive = body.get("directive") or body.get("text") or ""
+    return await asyncio.to_thread(_agent_command_router, directive)
+
+
+@app.get("/api/agent/improvements")
+async def api_agent_improvements():
+    return await asyncio.to_thread(_self_improvement_suggestions)
+
+
+@app.get("/api/revenue/status")
+async def api_revenue_status():
+    return await asyncio.to_thread(_revenue_dashboard)
+
+
+@app.get("/api/system/predictions")
+async def api_system_predictions():
+    return await asyncio.to_thread(_predictive_monitoring)
+
+
+@app.get("/api/workflows/productize")
+async def api_workflows_productize():
+    return await asyncio.to_thread(_workflow_productize_inventory)
+
+
+@app.get("/api/workflows/productize/{slug}")
+async def api_workflows_productize_slug(slug: str):
+    inv = _workflow_productize_inventory()
+    pack = next((p for p in inv.get("ready_packs", []) if p.get("product_url_slug") == slug), None)
+    if not pack:
+        raise HTTPException(status_code=404, detail="workflow pack not found")
+    return {"pack": pack, "markdown": _workflow_pack_markdown(pack)}
+
+
+def _workflow_pack_markdown(pack: Dict[str, Any]) -> str:
+    lines = [
+        f"# {pack['workflow']} Workflow Pack",
+        "",
+        f"**Price:** ${pack['estimated_price']}",
+        f"**Tagline:** {pack['tagline']}",
+        "",
+        "## Includes",
+        "- Ready-to-load ComfyUI workflow JSON",
+        "- Model manifest (generate with Model Truth)",
+        "- Sample outputs",
+        "",
+        "## Setup",
+        "1. Copy workflow JSON into ComfyUI workflow manager.",
+        "2. Install required models from the manifest.",
+        "3. Hit Generate.",
+        "",
+        "## Notes",
+        "This pack was auto-generated from a working local AI lab configuration.",
+    ]
+    return "\n".join(lines)
 
 
 @app.get("/api/jobs")
