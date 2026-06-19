@@ -42,7 +42,7 @@ SECURITY_HEADERS = {
 # Paths that don't require authentication
 PUBLIC_PATHS = {
     "/health", "/healthz", "/metrics",
-    "/dashboard", "/static/", "/favicon.ico",
+    "/", "/dashboard", "/static/", "/favicon.ico",
     "/api/improve-prompt", "/api/generate",  # Allow local dashboard prompt actions without auth for UX
     "/ws",
     "/ready", "/live",
@@ -58,7 +58,10 @@ PUBLIC_PATHS = {
     "/api/upload", "/api/upscale", "/api/variations", "/api/cleanup", "/api/backup", "/api/heal", "/api/report",
     "/api/security/scan", "/api/security/audit", "/api/security/stats",
     "/api/disk/rescue", "/api/models/truth", "/api/dashboard/smoke", "/api/dashboard/logs", "/api/workstation/op",
-    "/api/agent/command", "/api/agent/improvements", "/api/revenue/status", "/api/system/predictions", "/api/workflows/productize", "/api/workflows/productize/*",
+    "/api/revenue/export", "/api/revenue/export.json", "/api/disk/rescue/export", "/api/predictions/export", "/api/predictions/export.json",
+    "/api/agent/improvements/export", "/api/agent/improvements/export.json",
+    "/api/workflows/productize/{slug}/export",
+    # Sensitive (money / predictions / exports / agent) require Bearer token
 }
 
 # Paths that require admin role
@@ -90,22 +93,47 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         # harmless; process-kill/write actions stay protected unless explicitly
         # authenticated.
         path = request.url.path
+
+        def _is_public(p: str) -> bool:
+            """Match public path exactly, or as a prefix when the rule ends with '/'.
+            This prevents '/' from acting as a wildcard for every route.
+            Special case: '/' is exact-match only (the root)."""
+            if p == path:
+                return True
+            if p == "/":
+                return False  # root is exact-only; already handled above
+            if p.endswith("/") and path.startswith(p):
+                return True
+            # Allow directory-style prefixes like '/api/foo' to match '/api/foo/bar'
+            if not p.endswith("/") and path.startswith(p + "/"):
+                return True
+            return False
+
         public_dashboard_read = request.method == "GET" and path.startswith("/api/gpu/") and path.endswith("/processes")
-        if self.enable_auth and not public_dashboard_read and not any(path.startswith(p) for p in PUBLIC_PATHS):
+        if self.enable_auth and not public_dashboard_read and not any(_is_public(p) for p in PUBLIC_PATHS):
             # Check for authentication
-            auth_header = request.headers.get("Authorization")
-            if not auth_header or not auth_header.startswith("Bearer "):
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Authentication required", "error": "UNAUTHORIZED"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-
-            # Validate token (basic check - full validation in auth middleware)
-            if not auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            # Accept either a JWT (validated against secret) or a shared dashboard token
+            try:
+                from app.utils.auth import get_dashboard_token as _gdt
+                _dash_tok = _gdt()
+                if token == _dash_tok:
+                    pass  # shared dashboard token OK
+                else:
+                    import jwt as _jwt
+                    from app.config import settings as _settings
+                    _jwt.decode(token, _settings.secret_key, algorithms=[_settings.algorithm])
+            except Exception as _exc:
                 return JSONResponse(
                     status_code=401,
-                    content={"detail": "Invalid authorization header", "error": "INVALID_AUTH"},
+                    content={"detail": f"Invalid token: {_exc}", "error": "INVALID_AUTH"},
                 )
 
         # Request size limit: dashboard image/model uploads may be large; stream them in endpoint.

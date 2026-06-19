@@ -232,9 +232,15 @@ const UI = {
 // ========================================
 const API = {
   base: '',
+  token: (typeof window !== 'undefined' && window.__DASHBOARD_TOKEN__) || '',
 
   async request(endpoint, options = {}, expectJson = true) {
-    const headers = { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), 'X-Request-ID': crypto.randomUUID(), ...(options.headers || {}) };
+    const headers = {
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      'X-Request-ID': crypto.randomUUID(),
+      ...(this.token ? { 'Authorization': `Bearer ${this.token}` } : {}),
+      ...(options.headers || {})
+    };
     const res = await fetch(`${this.base}${endpoint}`, { ...options, headers });
     if (!res.ok) throw new Error(await res.text());
     if (!expectJson) return await res.text();

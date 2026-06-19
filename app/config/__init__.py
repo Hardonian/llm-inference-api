@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     rate_limit_requests_per_minute: int = 60
     rate_limit_burst: int = 10
 
+    # Dashboard auth (shared secret sent in Authorization header from browser)
+    dashboard_api_token: Optional[str] = None
+
+    # Demo mode (fake GPU/services data)
+    demo_mode: bool = False
+
+    # Caching TTLs (seconds)
+    cache_disk_rescue_ttl: int = 3600
+    cache_models_truth_ttl: int = 3600
+
     @property
     def redis_url(self) -> str:
         if self.redis_password:

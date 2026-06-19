@@ -8,7 +8,7 @@ import tarfile
 import subprocess
 from typing import Optional, List, Any, Dict
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, Form, File, UploadFile, Body
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import OAuth2PasswordRequestForm
@@ -54,14 +54,32 @@ async def lifespan(app: FastAPI):
     await ollama_manager.health_check_all()
     _system_snapshot()
     task = asyncio.create_task(_watchdog_loop())
-    yield
-    task.cancel()
     try:
-        await task
-    except asyncio.CancelledError:
-        pass
+        epic_task = asyncio.create_task(_epic_push_loop())
     except Exception:
-        logger.exception("watchdog_shutdown_failed")
+        epic_task = None
+    try:
+        alert_task = asyncio.create_task(_alert_loop())
+    except Exception:
+        alert_task = None
+    # Warm the disk rescue cache in background so the first request isn't slow.
+    async def _warm_disk_cache():
+        try:
+            await asyncio.to_thread(_disk_rescue_compute)
+            logger.info("disk_rescue_cache_warmed")
+        except Exception as _e:
+            logger.warning(f"disk_rescue_cache_warm_failed: {_e}")
+    warm_task = asyncio.create_task(_warm_disk_cache())
+    logger.info("dashboard_token", token=_dashboard_token()[:12] + "...")
+    yield
+    for t in (task, epic_task, alert_task, warm_task):
+        if t is None:
+            continue
+        t.cancel()
+        try:
+            await t
+        except (asyncio.CancelledError, Exception):
+            pass
     await ollama_manager.close()
     logger.info("shutting down")
 
@@ -87,6 +105,10 @@ COMFYUI_INPUT_DIR = COMFYUI_ROOT / "input"
 COMFYUI_MODELS_DIR = COMFYUI_ROOT / "models"
 COMFYUI_OUTPUT_DIR = COMFYUI_ROOT / "output"
 DASHBOARD_STATE_DIR = Path("/home/scott/ai-lab/dashboard")
+
+# Disk rescue cache: 30-min TTL is plenty because disk state changes slowly.
+_DISK_RESCUE_TTL = 1800
+_DISK_RESCUE_MEM: Optional[Dict[str, Any]] = None  # in-process memo
 JOBS_FILE = DASHBOARD_STATE_DIR / "jobs.json"
 ACHIEVEMENTS_FILE = DASHBOARD_STATE_DIR / "achievements.json"
 
@@ -983,10 +1005,23 @@ async def favicon():
     return FileResponse(Path("app/static/favicon.svg"), media_type="image/svg+xml")
 
 
+@app.get("/", response_class=HTMLResponse)
+@app.head("/", response_class=HTMLResponse)
+async def landing():
+    import os as _os
+    template = templates.env.get_template("landing.html")
+    return HTMLResponse(content=await template.render_async({"demo_mode": _os.environ.get("DEMO_MODE", "").lower() in ("true", "1", "yes")}))
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     template = templates.env.get_template("dashboard.html")
     content = await template.render_async({"request": request, "data": {}})
+    # Inject the dashboard auth token so the JS can call protected endpoints
+    import json as _json
+    token = _dashboard_token()
+    inject = f'<meta name="dashboard-token" content="{token}"><script>window.__DASHBOARD_TOKEN__={_json.dumps(token)};</script>'
+    content = content.replace("</head>", inject + "</head>", 1)
     return HTMLResponse(content=content)
 
 
@@ -1504,16 +1539,47 @@ def _du_children(path: str, depth: int = 1, limit: int = 30) -> List[Dict[str, A
 
 
 def _disk_rescue_report() -> Dict[str, Any]:
+    """Heavy disk report with multi-tier caching.
+
+    Tier 1: in-process LRU (instant).
+    Tier 2: disk cache file with 30-min TTL (fast, shared across workers).
+    Tier 3: full recompute (slow, ~20s; only when cache missing or expired).
+    """
     cache = DASHBOARD_STATE_DIR / "disk_rescue.json"
+    # Tier 1: in-process memory
+    global _DISK_RESCUE_MEM
+    if _DISK_RESCUE_MEM is not None and time.time() - _DISK_RESCUE_MEM.get("_mem_ts", 0) < _DISK_RESCUE_TTL:
+        out = dict(_DISK_RESCUE_MEM)
+        out["cached"] = True
+        out["cache_age_sec"] = round(time.time() - out.get("_mem_ts", 0), 1)
+        out["cache_tier"] = "memory"
+        out.pop("_mem_ts", None)
+        return out
+    # Tier 2: disk cache
     try:
-        if cache.exists() and time.time() - cache.stat().st_mtime < 300:
+        if cache.exists() and time.time() - cache.stat().st_mtime < _DISK_RESCUE_TTL:
             cached = _read_json_file(cache, {})
             if cached:
                 cached["cached"] = True
                 cached["cache_age_sec"] = round(time.time() - cache.stat().st_mtime, 1)
+                cached["cache_tier"] = "disk"
+                _DISK_RESCUE_MEM = {**cached, "_mem_ts": time.time()}
                 return cached
     except Exception:
         pass
+    # Tier 3: full recompute (slow path; persists to disk cache after)
+    payload = _disk_rescue_compute()
+    try:
+        _write_json_file(cache, payload)
+        _DISK_RESCUE_MEM = {**payload, "_mem_ts": time.time()}
+    except Exception:
+        pass
+    payload["cache_tier"] = "fresh"
+    return payload
+
+
+def _disk_rescue_compute() -> Dict[str, Any]:
+    """Heavy disk report compute. Runs ~20s; should be cached after."""
     paths = [p for p in ["/", "/mnt/ai-storage", "/home", "/opt", "/tmp"] if Path(p).exists()]
     disks = [_disk_usage_path(p) for p in paths]
     inactive_swap = []
@@ -1549,7 +1615,7 @@ def _disk_rescue_report() -> Dict[str, Any]:
         "snap_ollama_store": _du_children("/mnt/ai-storage/var/snap/ollama/common/models", 1, 10) if Path("/mnt/ai-storage/var/snap/ollama/common/models").exists() else [],
     }
     reclaim = sum(x["size"] for x in inactive_swap if not x.get("active")) + sum(x["size"] for x in stale_download_models) + sum(x["size"] for x in snap_chunks)
-    payload = {
+    return {
         "timestamp": _now_ts(),
         "disks": disks,
         "top_dirs": {p: _du_children(p, 1, 20) for p in ("/mnt/ai-storage", "/home/scott", "/opt", "/var") if Path(p).exists()},
@@ -1559,11 +1625,6 @@ def _disk_rescue_report() -> Dict[str, Any]:
         "estimated_reclaim_h": _bytes_fmt(reclaim),
         "sudo_needed": ["/mnt/ai-storage/swapfile64", "/mnt/ai-storage/swapfile-ai", "/mnt/ai-storage/var/lib/snapd/snaps/*"],
     }
-    try:
-        _write_json_file(cache, payload)
-    except Exception:
-        pass
-    return payload
 
 
 def _disk_rescue_execute(action: str) -> Dict[str, Any]:
@@ -2283,7 +2344,9 @@ async def refresh_token(refresh_token: str = Form(...)):
 
 @app.get("/api/auth/me")
 async def get_current_user_info(user: dict = Depends(get_current_user_optional)):
-    return user or {"authenticated": False}
+    if user:
+        return {**user, "authenticated": True}
+    return {"authenticated": False}
 
 
 # HEALTH/READINESS
@@ -2334,6 +2397,384 @@ async def admin_metrics():
         "uptime": time.time() - psutil.boot_time(),
         "processes": len(psutil.pids()),
     }
+
+
+
+
+# ============================================================
+# Dashboard auth token (uses shared util; persisted to file)
+# ============================================================
+def _dashboard_token() -> str:
+    from app.utils.auth import get_dashboard_token
+    return get_dashboard_token()
+
+
+# ============================================================
+# R2: EXPORT ENDPOINTS (markdown, tar.gz bundles)
+# ============================================================
+def _to_markdown_export(title: str, payload: dict) -> str:
+    import datetime as _dt
+    ts = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines = [f"# {title}", "", f"_Generated: {ts}_", ""]
+    def render(obj, depth=0):
+        out = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, (dict, list)) and v:
+                    out.append(f"{'  '*depth}- **{k}**:")
+                    out.extend(render(v, depth+1))
+                else:
+                    out.append(f"{'  '*depth}- **{k}**: {v}")
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj[:50]):
+                if isinstance(item, (dict, list)):
+                    out.append(f"{'  '*depth}- [{i}]")
+                    out.extend(render(item, depth+1))
+                else:
+                    out.append(f"{'  '*depth}- {item}")
+        return out
+    lines.extend(render(payload))
+    return "\n".join(lines)
+
+
+@app.get("/api/revenue/export", response_class=Response)
+async def api_revenue_export_md():
+    md = _to_markdown_export("AI Lab Revenue Report", _revenue_dashboard())
+    return Response(content=md, media_type="text/markdown",
+                    headers={"Content-Disposition": "attachment; filename=revenue-report.md"})
+
+
+@app.get("/api/revenue/export.json", response_class=Response)
+async def api_revenue_export_json():
+    return Response(content=json.dumps(_revenue_dashboard(), indent=2, default=str),
+                    media_type="application/json",
+                    headers={"Content-Disposition": "attachment; filename=revenue-report.json"})
+
+
+@app.get("/api/disk/rescue/export", response_class=Response)
+async def api_disk_rescue_export_md():
+    md = _to_markdown_export("AI Lab Disk Rescue Report", _disk_rescue_report())
+    return Response(content=md, media_type="text/markdown",
+                    headers={"Content-Disposition": "attachment; filename=disk-rescue.md"})
+
+
+@app.get("/api/predictions/export", response_class=Response)
+async def api_predictions_export_md():
+    md = _to_markdown_export("AI Lab Predictive Monitoring", _predictive_monitoring())
+    return Response(content=md, media_type="text/markdown",
+                    headers={"Content-Disposition": "attachment; filename=predictions.md"})
+
+
+@app.get("/api/predictions/export.json", response_class=Response)
+async def api_predictions_export_json():
+    return Response(content=json.dumps(_predictive_monitoring(), indent=2, default=str),
+                    media_type="application/json",
+                    headers={"Content-Disposition": "attachment; filename=predictions.json"})
+
+
+@app.get("/api/agent/improvements/export", response_class=Response)
+async def api_improvements_export_md():
+    inv = _self_improvement_suggestions()
+    md = _to_markdown_export("AI Lab Self-Improvement Suggestions", inv)
+    return Response(content=md, media_type="text/markdown",
+                    headers={"Content-Disposition": "attachment; filename=improvements.md"})
+
+
+@app.get("/api/agent/improvements/export.json", response_class=Response)
+async def api_improvements_export_json():
+    inv = _self_improvement_suggestions()
+    return Response(content=json.dumps(inv, indent=2, default=str),
+                    media_type="application/json",
+                    headers={"Content-Disposition": "attachment; filename=improvements.json"})
+
+
+@app.get("/api/workflows/productize/{slug}/export")
+async def api_workflow_pack_export(slug: str):
+    import io, tarfile
+    inv = _workflow_productize_inventory()
+    match = next((p for p in inv.get("ready_packs", []) if p["product_url_slug"] == slug), None)
+    if not match:
+        raise HTTPException(404, f"pack {slug} not found")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        wf_path = Path(match.get("workflow", "").strip())
+        if wf_path.exists():
+            tf.add(str(wf_path), arcname=f"workflow/{wf_path.name}")
+        for s in match.get("samples", [])[:6]:
+            sp = Path(s)
+            if sp.exists():
+                tf.add(str(sp), arcname=f"samples/{sp.name}")
+        readme = f"# {match['workflow']}\n\n{match['tagline']}\n\n**Price:** ${match['estimated_price']}\n\n## Samples\n\n" + \
+                 "\n".join(f"- {s}" for s in match.get("samples", [])[:6])
+        ri = io.BytesIO(readme.encode())
+        ti = tarfile.TarInfo("README.md")
+        ti.size = len(readme)
+        tf.addfile(ti, ri)
+    buf.seek(0)
+    return Response(content=buf.getvalue(), media_type="application/gzip",
+                    headers={"Content-Disposition": f"attachment; filename={slug}.tar.gz"})
+
+
+# ============================================================
+# R5: PERSISTENCE + TRENDS
+# ============================================================
+HISTORY_FILES = {
+    "revenue": DASHBOARD_STATE_DIR / "revenue_history.json",
+    "improvements": DASHBOARD_STATE_DIR / "improvement_history.json",
+    "predictions": DASHBOARD_STATE_DIR / "prediction_history.json",
+    "agents": DASHBOARD_STATE_DIR / "agent_history.json",
+}
+
+
+def _record_history(kind: str, payload: dict) -> None:
+    fp = HISTORY_FILES.get(kind)
+    if not fp:
+        return
+    history = _read_json_file(fp, [])
+    history.append({"ts": _now_ts(), **payload})
+    history = history[-2000:]
+    _write_json_file(fp, history)
+
+
+def _read_list(fp):
+    return _read_json_file(fp, [])
+
+
+def _write_list(fp, items):
+    _write_json_file(fp, items)
+
+
+@app.get("/api/trends")
+async def api_trends():
+    out = {}
+    for kind, fp in HISTORY_FILES.items():
+        history = _read_list(fp)
+        if kind == "revenue":
+            out[kind] = {
+                "sample_count": len(history),
+                "overall_readiness_delta": _trend_delta([h for h in history if "overall_readiness" in h], "overall_readiness"),
+            }
+        elif kind == "improvements":
+            out[kind] = {"sample_count": len(history), "last_count": history[-1].get("count", 0) if history else 0}
+        elif kind == "predictions":
+            out[kind] = {"sample_count": len(history),
+                          "last_risk": history[-1].get("worst_risk") if history else None}
+        elif kind == "agents":
+            cmds = [h for h in history if h.get("intent") and h["intent"] != "unknown"]
+            out[kind] = {"sample_count": len(history), "top_intent": cmds[-1]["intent"] if cmds else None}
+    return {"updated_at": _now_ts(), "trends": out}
+
+
+def _trend_delta(history, key):
+    if not history or len(history) < 2:
+        return {"delta": 0, "current": None, "previous": None}
+    cur = history[-1].get(key, 0)
+    prev = history[max(-7*24*60//30, -len(history))].get(key, cur)
+    return {"delta": round((cur or 0) - (prev or 0), 2), "current": cur, "previous": prev}
+
+
+# ============================================================
+# R7: P50/P95 LATENCY MONITORING + ALERT WEBHOOK
+# ============================================================
+import collections as _collections
+ENDPOINT_LATENCY = {}
+ENDPOINT_LATENCY_MAX = 5000
+
+
+def _record_latency(path, duration):
+    if path not in ENDPOINT_LATENCY:
+        ENDPOINT_LATENCY[path] = _collections.deque(maxlen=ENDPOINT_LATENCY_MAX)
+    ENDPOINT_LATENCY[path].append((_now_ts(), duration))
+
+
+@app.middleware("http")
+async def _latency_middleware(request, call_next):
+    start = _now_ts()
+    response = await call_next(request)
+    _record_latency(request.url.path, _now_ts() - start)
+    return response
+
+
+@app.get("/api/p50")
+async def api_p50():
+    out = []
+    alerts = []
+    for path, samples in ENDPOINT_LATENCY.items():
+        if not samples:
+            continue
+        dur = [s[1] for s in samples]
+        if not dur:
+            continue
+        p50 = sorted(dur)[len(dur)//2] * 1000
+        p95 = (sorted(dur)[min(int(len(dur)*0.95), len(dur)-1)] if len(dur) > 1 else dur[0]) * 1000
+        out.append({"path": path, "p50_ms": round(p50, 1), "p95_ms": round(p95, 1), "samples": len(dur)})
+        if p95 > 5000 and path not in ("/api/dashboard/smoke", "/api/disk/rescue"):
+            alerts.append({"path": path, "p95_ms": round(p95, 1)})
+            try:
+                await _fire_webhook({"event": "high_latency", "path": path, "p95_ms": p95})
+            except Exception:
+                pass
+    out.sort(key=lambda x: x["p95_ms"], reverse=True)
+    return {"updated_at": _now_ts(), "endpoints": out[:25], "alerts": alerts}
+
+
+ALERT_WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "").strip()
+ALERT_WEBHOOK_LOG = DASHBOARD_STATE_DIR / "alert_webhooks.json"
+
+
+async def _fire_webhook(payload):
+    if not ALERT_WEBHOOK_URL:
+        return
+    try:
+        import httpx as _httpx_w
+        async with _httpx_w.AsyncClient(timeout=5) as client:
+            await client.post(ALERT_WEBHOOK_URL, json=payload)
+    except Exception:
+        pass
+    log = _read_list(ALERT_WEBHOOK_LOG)
+    log.append({"ts": _now_ts(), **payload})
+    _write_list(ALERT_WEBHOOK_LOG, log[-200:])
+
+
+async def _alert_loop():
+    while True:
+        try:
+            snap = await asyncio.to_thread(_system_snapshot)
+            for d in snap.get("disk", {}).get("paths", []):
+                if d.get("percent", 0) >= 90:
+                    try:
+                        await _fire_webhook({"event": "disk_pressure", "path": d["path"], "percent": d.get("percent")})
+                    except Exception:
+                        pass
+            for s in snap.get("services", []):
+                if not s.get("ok"):
+                    try:
+                        await _fire_webhook({"event": "service_down", "service": s.get("name")})
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        await asyncio.sleep(300)
+
+
+# ============================================================
+# R4: DEMO MODE (fakes GPU/services data)
+# ============================================================
+def _maybe_demo_override(report):
+    if os.environ.get("DEMO_MODE", "").lower() not in ("true", "1", "yes"):
+        return report
+    report = dict(report)
+    report["services"] = [{"name": s.get("name"), "ok": True, "status": 200, "latency_ms": 5} for s in report.get("services", [])]
+    if "disk" in report:
+        report["disk"] = {"paths": [
+            {"path": "/", "used_gb": 90.0, "free_gb": 376.0, "percent": 19},
+            {"path": "/mnt/ai-storage", "used_gb": 220.0, "free_gb": 718.0, "percent": 23},
+        ]}
+    report["demo_mode"] = True
+    return report
+
+
+# ============================================================
+# R12: MULTI-USER FOUNDATION
+# ============================================================
+USERS_FILE = DASHBOARD_STATE_DIR / "users.json"
+DASHBOARD_TOKENS_FILE = DASHBOARD_STATE_DIR / "dashboard_tokens.json"
+
+
+def _load_users():
+    return _read_json_file(USERS_FILE, [{"id": "default", "name": "Scott", "tenant": "default", "scopes": ["admin", "dashboard"]}])
+
+
+def _save_users(users):
+    _write_json_file(USERS_FILE, users)
+
+
+def _load_tokens():
+    return _read_json_file(DASHBOARD_TOKENS_FILE, [])
+
+
+def _save_tokens(tokens):
+    _write_json_file(DASHBOARD_TOKENS_FILE, tokens)
+
+
+
+
+@app.get("/api/auth/tokens")
+async def api_list_tokens():
+    tokens = _load_tokens()
+    return [{"id": t["id"], "user_id": t.get("user_id"), "scopes": t.get("scopes"), "created_at": t.get("created_at")} for t in tokens]
+
+
+@app.post("/api/auth/tokens")
+async def api_create_token(req: Request):
+    import secrets as _secrets
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    user_id = body.get("user_id", "default")
+    scopes = body.get("scopes", ["dashboard"])
+    tid = _secrets.token_urlsafe(24)
+    token = "dash_" + tid
+    tokens = _load_tokens()
+    tokens.append({"id": tid, "token": token, "user_id": user_id, "scopes": scopes, "created_at": _now_ts()})
+    _save_tokens(tokens)
+    return {"id": tid, "token": token, "user_id": user_id, "scopes": scopes}
+
+
+# ============================================================
+# R8: WEBSOCKET PUSH FOR EPIC EVENTS
+# ============================================================
+_EPIC_WS_SUBSCRIBERS = []
+
+
+@app.websocket("/ws/epic")
+async def epic_ws(websocket):
+    await websocket.accept()
+    _EPIC_WS_SUBSCRIBERS.append(websocket)
+    try:
+        while True:
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_text("{}")
+                except Exception:
+                    break
+    except Exception:
+        pass
+    finally:
+        if websocket in _EPIC_WS_SUBSCRIBERS:
+            _EPIC_WS_SUBSCRIBERS.remove(websocket)
+
+
+async def _epic_broadcast(payload):
+    import json
+    msg = json.dumps(payload, default=str)
+    for ws in list(_EPIC_WS_SUBSCRIBERS):
+        try:
+            await ws.send_text(msg)
+        except Exception:
+            if ws in _EPIC_WS_SUBSCRIBERS:
+                _EPIC_WS_SUBSCRIBERS.remove(ws)
+
+
+async def _epic_push_loop():
+    while True:
+        try:
+            snap = await asyncio.to_thread(_system_snapshot)
+            rev = await asyncio.to_thread(_revenue_dashboard)
+            pred = await asyncio.to_thread(_predictive_monitoring)
+            await _epic_broadcast({
+                "type": "tick",
+                "ts": _now_ts(),
+                "revenue_readiness": rev.get("overall_readiness"),
+                "predictions": pred.get("predictions", []),
+                "services_ok": sum(1 for s in snap.get("services", []) if s.get("ok")),
+            })
+        except Exception:
+            pass
+        await asyncio.sleep(15)
 
 
 if __name__ == "__main__":

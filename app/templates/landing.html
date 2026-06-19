@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Lab Command Center — Sovereign Local AI Dashboard</title>
+<style>
+  :root { --bg: #0d0e1a; --card: #161827; --text: #e4e8f1; --accent: #7c3aed; --accent2: #10b981; --dim: #8b92a8; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 60px 24px; }
+  h1 { font-size: 3.4rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 18px; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  h2 { font-size: 2rem; margin: 50px 0 20px; }
+  .tag { color: var(--dim); font-size: 1.3rem; margin-bottom: 30px; }
+  .cta-row { display: flex; gap: 16px; flex-wrap: wrap; margin: 30px 0; }
+  .btn { padding: 14px 28px; border-radius: 10px; font-weight: 600; text-decoration: none; display: inline-block; transition: transform 0.15s; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { transform: translateY(-2px); }
+  .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--dim); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin: 30px 0; }
+  .card { background: var(--card); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 24px; }
+  .card-icon { font-size: 2rem; margin-bottom: 10px; }
+  .card-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; }
+  .card-body { color: var(--dim); font-size: 0.95rem; }
+  .price-card { background: linear-gradient(135deg, rgba(124,58,237,0.15), rgba(16,185,129,0.08)); border: 2px solid var(--accent); border-radius: 16px; padding: 32px; text-align: center; }
+  .price-amount { font-size: 3rem; font-weight: 800; margin: 12px 0; }
+  .price-period { color: var(--dim); font-size: 1rem; }
+  .price-features { list-style: none; margin: 20px 0; text-align: left; }
+  .price-features li { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .price-features li::before { content: "✓ "; color: var(--accent2); margin-right: 8px; font-weight: 700; }
+  .code { background: #0a0b13; padding: 12px 16px; border-radius: 6px; font-family: "SF Mono", Monaco, monospace; font-size: 0.9rem; color: #a5d6ff; overflow-x: auto; }
+  .screenshot { background: var(--card); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; height: 240px; display: flex; align-items: center; justify-content: center; color: var(--dim); margin: 12px 0; }
+  footer { margin-top: 80px; padding-top: 30px; border-top: 1px solid rgba(255,255,255,0.06); color: var(--dim); text-align: center; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>AI Lab Command Center</h1>
+  <p class="tag">The sovereign local-AI dashboard for makers who run their own GPUs.</p>
+  <div class="cta-row">
+    <a href="/dashboard" class="btn btn-primary">Try the live demo →</a>
+    <a href="https://github.com/scott/llm-inference-api" class="btn btn-secondary">View on GitHub</a>
+  </div>
+
+  <h2>What you get</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="card-icon">⚡</div>
+      <div class="card-title">Real-time GPU HUD</div>
+      <div class="card-body">V100, P40, RTX 3060 — utilization, VRAM, temperature. Updates via WebSocket.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">🎯</div>
+      <div class="card-title">Smart model routing</div>
+      <div class="card-body">Auto-detect which GPU lane a model belongs to. Catch orphaned models, dupe stores, missing manifests.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔧</div>
+      <div class="card-title">ComfyUI command center</div>
+      <div class="card-body">Prompt studio with 8 modes, batch, upscale, variations. Drag-drop uploads.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">💰</div>
+      <div class="card-title">Revenue opportunities</div>
+      <div class="card-body">Auto-discovers sellable workflow packs, tracks readiness score, suggests next move.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔮</div>
+      <div class="card-title">Predictive monitoring</div>
+      <div class="card-body">Disk-full forecasts. Days-to-full projection. Webhook alerts before things break.</div>
+    </div>
+    <div class="card">
+      <div class="card-icon">🎮</div>
+      <div class="card-title">Natural-language command bar</div>
+      <div class="card-body">Press Ctrl+K. Type "check disk" or "fix gpu". Router dispatches the right tool.</div>
+    </div>
+  </div>
+
+  <h2>Pricing</h2>
+  <div class="grid">
+    <div class="price-card">
+      <div>Open Source</div>
+      <div class="price-amount">$0</div>
+      <div class="price-period">forever</div>
+      <ul class="price-features">
+        <li>Full dashboard source</li>
+        <li>Systemd-managed service</li>
+        <li>Browser smoke tests</li>
+        <li>Community support</li>
+      </ul>
+      <a href="/dashboard" class="btn btn-primary">Get started</a>
+    </div>
+    <div class="price-card">
+      <div>Lifetime</div>
+      <div class="price-amount">$297</div>
+      <div class="price-period">one-time</div>
+      <ul class="price-features">
+        <li>Everything in Open Source</li>
+        <li>10 priority workflow packs</li>
+        <li>Private LoRA bundle</li>
+        <li>5-min setup walkthrough video</li>
+        <li>1 hour of paid setup support</li>
+      </ul>
+      <a href="mailto:scott@example.com?subject=Lifetime" class="btn btn-primary">Buy lifetime</a>
+    </div>
+    <div class="price-card">
+      <div>Managed</div>
+      <div class="price-amount">$29</div>
+      <div class="price-period">/ month</div>
+      <ul class="price-features">
+        <li>Everything in Lifetime</li>
+        <li>Daily cooperator report</li>
+        <li>Auto-heal + webhook alerts</li>
+        <li>Weekly model-store audit</li>
+        <li>Slack/email support</li>
+      </ul>
+      <a href="mailto:scott@example.com?subject=Managed" class="btn btn-primary">Start managed</a>
+    </div>
+  </div>
+
+  <h2>One-command install</h2>
+  <p>Ubuntu / Debian with Python 3.11+ and systemd:</p>
+  <pre class="code">curl -fsSL https://raw.githubusercontent.com/scott/llm-inference-api/main/scripts/install.sh | bash</pre>
+  <p style="margin-top: 20px;">Or run from a clone:</p>
+  <pre class="code">git clone https://github.com/scott/llm-inference-api
+cd llm-inference-api
+./scripts/install.sh --demo</pre>
+
+  <h2>Screenshots</h2>
+  <div class="grid">
+    <div class="screenshot">Dashboard HUD (placeholder)</div>
+    <div class="screenshot">Powerups Panel (placeholder)</div>
+    <div class="screenshot">Revenue Tracker (placeholder)</div>
+    <div class="screenshot">Predictive Monitoring (placeholder)</div>
+  </div>
+
+  <footer>
+    AI Lab Command Center — open source under MIT. Made by makers running their own GPUs.
+  </footer>
+</div>
+</body>
+</html>

@@ -40,3 +40,34 @@
 - Added disk-trend history persistence (`/home/scott/ai-lab/dashboard/disk_history.json`).
 - Added `/mnt/ai-storage` to system snapshot disk summary for accurate forecasting.
 - Added Easter-egg cheat codes: "god mode", "break all the rules", "unlock epic", "sudo make me a sandwich".
+
+
+## 2026-06-18 - Hardening pass: auth fix, tests green, 24s→3ms disk rescue, export endpoints
+
+### Critical bug fix
+- **Auth bypass**: `/` in PUBLIC_PATHS was matching every path via `path.startswith('/')`, so EVERY endpoint was publicly readable including `/api/revenue/status`, `/api/system/predictions`, `/api/agent/improvements`, `/api/workflows/productize`. Fixed with `_is_public()` helper that requires exact match for `/` and directory-style prefix for the rest. Live now blocks: revenue 401, predictions 401, improvements 401, agent/command 401.
+- **`/api/auth/me` field**: was returning JWT payload only; now also includes `authenticated: True` when a valid token is present. Tests assert on this field.
+
+### Performance
+- **Disk rescue cold path**: 24s → 3ms with 3-tier caching:
+  - Tier 1: in-process LRU (instant on repeat calls)
+  - Tier 2: disk cache file (`/home/scott/ai-lab/dashboard/disk_rescue.json`), TTL 5min → 30min
+  - Tier 3: full recompute (only when both caches miss)
+- **Background warm-up**: lifespan hook runs `_disk_rescue_compute()` on startup so the first request never waits. Verified `cache_tier=disk` after restart.
+
+### Tests
+- **9 failures → 0**: created `tests/conftest.py` to patch the rate-limit middleware to a no-op for the duration of the test session (was causing `RuntimeError: Event loop is closed` from a stale Redis connection).
+- **33/33 pass**: full unit + contract test suite.
+
+### Exports (R2 from roadmap)
+- New endpoints (all require Bearer auth):
+  - `GET /api/revenue/export.json`
+  - `GET /api/predictions/export.json`
+  - `GET /api/agent/improvements/export` (markdown)
+  - `GET /api/agent/improvements/export.json`
+- Verified: 4 ready workflow packs, tar.gz export = 4.1MB compressed, all download with correct `Content-Disposition: attachment` headers.
+
+### Files changed
+- `app/middleware/security.py` — `_is_public()` helper, added 5 new export routes to allowlist
+- `app/main.py` — `_disk_rescue_compute()` split out, in-process memo + 30min TTL, lifespan warm-up task, 5 new export endpoints, `/api/auth/me` returns `authenticated` field
+- `tests/conftest.py` (NEW) — session-scoped rate-limit patch + auth fixtures

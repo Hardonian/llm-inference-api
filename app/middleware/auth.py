@@ -51,13 +51,27 @@ async def get_current_user_optional(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> Optional[dict]:
-    """Extract user from token if present, otherwise return None."""
+    """Extract user from token if present, otherwise return None.
+
+    Accepts either a JWT (validated against secret) or a shared dashboard token.
+    """
     if not credentials:
         return None
 
+    token = credentials.credentials
+    # Shared dashboard token (auto-generated)
+    try:
+        from app.utils.auth import get_dashboard_token as _gdt
+        if token == _gdt():
+            payload = {"sub": "default", "name": "Scott", "scopes": ["admin", "dashboard"], "auth_mode": "shared_token"}
+            request.state.user = payload
+            return payload
+    except Exception:
+        pass
+
     try:
         payload = jwt.decode(
-            credentials.credentials,
+            token,
             settings.secret_key,
             algorithms=[settings.algorithm],
         )
