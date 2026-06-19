@@ -1226,22 +1226,39 @@ async def api_agent_command(request: Request):
     try: body = await request.json()
     except Exception: pass
     directive = body.get("directive") or body.get("text") or ""
-    return await asyncio.to_thread(_agent_command_router, directive)
+    result = _agent_command_router(directive)
+    try: _record_history("agents", {"directive": str(directive)[:100], "intent": result.get("intent", "unknown")})
+    except Exception: pass
+    return result
 
 
 @app.get("/api/agent/improvements")
 async def api_agent_improvements():
-    return await asyncio.to_thread(_self_improvement_suggestions)
+    data = _self_improvement_suggestions()
+    try: _record_history("improvements", {"count": len(data.get("suggestions", []))})
+    except Exception: pass
+    return data
 
 
 @app.get("/api/revenue/status")
 async def api_revenue_status():
-    return await asyncio.to_thread(_revenue_dashboard)
+    data = _revenue_dashboard()
+    try: _record_history("revenue", {"overall_readiness": data.get("overall_readiness"), "path_count": len(data.get("paths", []))})
+    except Exception: pass
+    return data
 
 
 @app.get("/api/system/predictions")
 async def api_system_predictions():
-    return await asyncio.to_thread(_predictive_monitoring)
+    data = _predictive_monitoring()
+    try:
+        preds = data.get("predictions", [])
+        risk_ranks = {"low": 0, "med": 1, "high": 2, "critical": 3}
+        worst = max((risk_ranks.get(p.get("risk", "low"), 0) for p in preds), default=0)
+        worst_label = {v: k for k, v in risk_ranks.items()}.get(worst, "low")
+        _record_history("predictions", {"worst_risk": worst_label, "count": len(preds)})
+    except Exception: pass
+    return data
 
 
 @app.get("/api/workflows/productize")
@@ -2586,27 +2603,73 @@ async def api_trends():
     for kind, fp in HISTORY_FILES.items():
         history = _read_list(fp)
         if kind == "revenue":
+            rev_hist = [h for h in history if "overall_readiness" in h]
             out[kind] = {
                 "sample_count": len(history),
-                "overall_readiness_delta": _trend_delta([h for h in history if "overall_readiness" in h], "overall_readiness"),
+                "readiness": _trend_delta(rev_hist, "overall_readiness"),
+                "windows": _trend_windows(rev_hist, "overall_readiness"),
             }
         elif kind == "improvements":
-            out[kind] = {"sample_count": len(history), "last_count": history[-1].get("count", 0) if history else 0}
+            imp_hist = [h for h in history if "count" in h]
+            out[kind] = {
+                "sample_count": len(history),
+                "count": _trend_delta(imp_hist, "count"),
+                "windows": _trend_windows(imp_hist, "count"),
+            }
         elif kind == "predictions":
-            out[kind] = {"sample_count": len(history),
-                          "last_risk": history[-1].get("worst_risk") if history else None}
+            risk_map = {"low": 0, "med": 1, "high": 2, "critical": 3}
+            pred_hist = [h for h in history if "worst_risk" in h]
+            numeric_hist = [{**h, "risk_n": risk_map.get(h.get("worst_risk", "low"), 0)} for h in pred_hist]
+            out[kind] = {
+                "sample_count": len(history),
+                "last_risk": history[-1].get("worst_risk") if history else None,
+                "risk_trend": _trend_delta(numeric_hist, "risk_n"),
+                "windows": _trend_windows(numeric_hist, "risk_n"),
+            }
         elif kind == "agents":
             cmds = [h for h in history if h.get("intent") and h["intent"] != "unknown"]
-            out[kind] = {"sample_count": len(history), "top_intent": cmds[-1]["intent"] if cmds else None}
+            intent_counts: dict = {}
+            for h in history:
+                i = h.get("intent", "unknown")
+                intent_counts[i] = intent_counts.get(i, 0) + 1
+            top_intents = sorted(intent_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]
+            out[kind] = {
+                "sample_count": len(history),
+                "top_intent": cmds[-1]["intent"] if cmds else None,
+                "intent_distribution": dict(top_intents),
+            }
     return {"updated_at": _now_ts(), "trends": out}
 
 
-def _trend_delta(history, key):
+def _trend_delta(history, key, window_n=200):
+    """Delta between current and window_n entries back."""
     if not history or len(history) < 2:
-        return {"delta": 0, "current": None, "previous": None}
+        return {"delta": 0, "current": None, "previous": None, "arrow": "—"}
     cur = history[-1].get(key, 0)
-    prev = history[max(-7*24*60//30, -len(history))].get(key, cur)
-    return {"delta": round((cur or 0) - (prev or 0), 2), "current": cur, "previous": prev}
+    prev_idx = max(0, len(history) - window_n)
+    prev = history[prev_idx].get(key, cur)
+    d = round((cur or 0) - (prev or 0), 2)
+    arrow = "▲" if d > 0 else ("▼" if d < 0 else "—")
+    return {"delta": d, "current": cur, "previous": prev, "arrow": arrow, "window": window_n}
+
+
+def _trend_windows(history, key):
+    """7d/30d/90d trend windows."""
+    now = _now_ts()
+    windows = {"7d": 7*24*60*60, "30d": 30*24*60*60, "90d": 90*24*60*60}
+    out = {}
+    for label, secs in windows.items():
+        cutoff = now - secs
+        bucket = [h for h in history if h.get("ts", 0) >= cutoff]
+        if bucket:
+            vals = [h.get(key, 0) for h in bucket if h.get(key) is not None]
+            if vals:
+                out[label] = {"min": min(vals), "max": max(vals), "avg": round(sum(vals)/len(vals), 1), "last": vals[-1], "count": len(vals)}
+            else:
+                out[label] = None
+        else:
+            out[label] = None
+    return out
 
 
 # ============================================================
@@ -2811,6 +2874,215 @@ async def _epic_push_loop():
         except Exception:
             pass
         await asyncio.sleep(15)
+
+
+
+# ============================================================
+# R10: CUSTOM PROMETHEUS COLLECTORS (app-level business metrics)
+# ============================================================
+try:
+    from prometheus_client import Gauge as _PGauge, Counter as _PCounter
+
+    revenue_readiness_gauge = _PGauge("dashboard_revenue_readiness", "Revenue readiness score 0-100")
+    disk_risk_gauge = _PGauge("dashboard_disk_risk_score", "Disk risk 0=low 1=med 2=high 3=critical")
+    services_healthy_gauge = _PGauge("dashboard_services_healthy", "Number of healthy services")
+    services_total_gauge = _PGauge("dashboard_services_total", "Total monitored services")
+    improvements_pending_gauge = _PGauge("dashboard_improvements_pending", "Pending self-improvement suggestions")
+    workflow_packs_ready_gauge = _PGauge("dashboard_workflow_packs_ready", "Ready workflow packs")
+    trends_samples_gauge = _PGauge("dashboard_trend_samples", "Trend history sample count", ["kind"])
+    export_downloads_counter = _PCounter("dashboard_export_downloads_total", "Total export downloads", ["format", "endpoint"])
+    agent_commands_counter = _PCounter("dashboard_agent_commands_total", "Total agent commands", ["intent"])
+
+    async def _update_prometheus_gauges():
+        """Refresh custom Prometheus gauges from live data."""
+        try:
+            rev = _revenue_dashboard()
+            revenue_readiness_gauge.set(rev.get("overall_readiness", 0))
+        except Exception: pass
+        try:
+            pred = _predictive_monitoring()
+            risk_map = {"low": 0, "med": 1, "high": 2, "critical": 3}
+            worst = max((risk_map.get(p.get("risk", "low"), 0) for p in pred.get("predictions", [])), default=0)
+            disk_risk_gauge.set(worst)
+        except Exception: pass
+        try:
+            imp = _self_improvement_suggestions()
+            improvements_pending_gauge.set(len(imp.get("suggestions", [])))
+        except Exception: pass
+        try:
+            packs = _workflow_productize_inventory()
+            workflow_packs_ready_gauge.set(len(packs.get("ready_packs", [])))
+        except Exception: pass
+        try:
+            snap = _system_snapshot()
+            svcs = snap.get("services", [])
+            services_total_gauge.set(len(svcs))
+            services_healthy_gauge.set(sum(1 for s in svcs if s.get("ok") or s.get("status") == "ok"))
+        except Exception: pass
+        try:
+            for kind, fp in HISTORY_FILES.items():
+                hist = _read_list(fp)
+                trends_samples_gauge.labels(kind=kind).set(len(hist))
+        except Exception: pass
+
+    @app.get("/admin/prometheus-refresh")
+    async def admin_prometheus_refresh():
+        await _update_prometheus_gauges()
+        return {"ok": True, "message": "Prometheus gauges refreshed"}
+
+except ImportError:
+    pass  # prometheus_client not installed
+
+
+# ============================================================
+# R10: /api/insights — Strategic intelligence endpoint
+# ============================================================
+@app.get("/api/insights")
+async def api_strategic_insights():
+    """Aggregated strategic intelligence: money paths, trends, bottlenecks, next moves."""
+    rev = _revenue_dashboard()
+    pred = _predictive_monitoring()
+    imp = _self_improvement_suggestions()
+    packs = _workflow_productize_inventory()
+    trends_data = {}
+    try:
+        for kind, fp in HISTORY_FILES.items():
+            history = _read_list(fp)
+            trends_data[kind] = {"sample_count": len(history)}
+    except Exception: pass
+
+    readiness = rev.get("overall_readiness", 0)
+    top_paths = sorted(
+        rev.get("paths", []),
+        key=lambda p: p.get("price_hint", 0) if isinstance(p.get("price_hint"), (int, float)) else 0,
+        reverse=True,
+    )
+    top_move = top_paths[0] if top_paths else None
+
+    risk_ranks = {"low": 0, "med": 1, "high": 2, "critical": 3}
+    worst_pred = max(pred.get("predictions", []), key=lambda p: risk_ranks.get(p.get("risk", "low"), 0), default={})
+
+    agent_hist = _read_list(HISTORY_FILES.get("agents", DASHBOARD_STATE_DIR / "agent_history.json"))
+    last_24h = [h for h in agent_hist if h.get("ts", 0) > _now_ts() - 86400]
+
+    insights = {
+        "updated_at": _now_ts(),
+        "revenue": {
+            "readiness": readiness,
+            "top_move": top_move.get("name", "None") if top_move else "None",
+            "top_move_price": top_move.get("price_hint", 0) if top_move else 0,
+            "ready_packs": len(packs.get("ready_packs", [])),
+        },
+        "risk": {
+            "worst_disk": worst_pred.get("path", "none"),
+            "worst_risk": worst_pred.get("risk", "low"),
+            "days_to_full": worst_pred.get("days_to_full"),
+            "high_risk_count": sum(1 for p in pred.get("predictions", []) if risk_ranks.get(p.get("risk"), 0) >= 2),
+        },
+        "velocity": {
+            "commands_24h": len(last_24h),
+            "unique_intents_24h": len(set(h.get("intent") for h in last_24h)),
+            "trending_intent": max(
+                set(h.get("intent") for h in last_24h),
+                key=lambda i: sum(1 for h in last_24h if h.get("intent") == i),
+                default=None,
+            ),
+        },
+        "trends": trends_data,
+        "next_actions": [],
+    }
+
+    if readiness < 50:
+        msg = f"Boost revenue readiness from {readiness}%"
+        if top_move:
+            msg += f" — ship {top_move.get('name', 'a money path')} first"
+        insights["next_actions"].append({"priority": 1, "action": msg})
+    if insights["risk"]["worst_risk"] in ("high", "critical"):
+        d = insights["risk"]["days_to_full"]
+        insights["next_actions"].append({
+            "priority": 1,
+            "action": f"Fix {insights['risk']['worst_disk']} ({insights['risk']['worst_risk']} risk{f' — {d} days to full' if d else ''})"
+        })
+    if insights["velocity"]["commands_24h"] < 5:
+        insights["next_actions"].append({"priority": 2, "action": "Low engagement — explore more commands via Ctrl+K palette"})
+    if len(packs.get("ready_packs", [])) >= 3 and readiness > 60:
+        insights["next_actions"].append({"priority": 1, "action": f"{len(packs['ready_packs'])} packs ready — launch"})
+
+    insights["next_actions"].sort(key=lambda x: x["priority"])
+    return insights
+
+
+
+# ============================================================
+# R12: MULTI-USER SKELETON (basic isolation)
+# ============================================================
+# R12: MULTI-USER ENDPOINTS (uses existing _load_users / _save_users)
+# ============================================================
+
+def _find_user(username: str) -> Optional[dict]:
+    return next((u for u in _load_users() if u.get("username") == username or u.get("name") == username), None)
+
+
+@app.get("/api/users/me")
+async def api_users_me(request: Request):
+    """Return the current user from bearer token or session."""
+    user = getattr(request.state, "user", None)
+    if user:
+        return {"authenticated": True, "username": user.get("username", "admin"), "role": user.get("role", "admin")}
+    return {"authenticated": False, "username": "anonymous", "role": "viewer"}
+
+
+@app.get("/api/users")
+async def api_users_list():
+    """List all users."""
+    users = _load_users()
+    return {"users": [{"username": u.get("username", u.get("name", u.get("id", "?"))),
+                       "role": u.get("role", "viewer"),
+                       "created_at": u.get("created_at")} for u in users]}
+
+
+@app.post("/api/users")
+async def api_users_create(request: Request):
+    """Create a new user."""
+    body = {}
+    try: body = await request.json()
+    except Exception: pass
+    username = body.get("username", "").strip()
+    role = body.get("role", "viewer")
+    if not username:
+        raise HTTPException(400, "username required")
+    users = _load_users()
+    if any(u.get("username", u.get("name", "")) == username for u in users):
+        raise HTTPException(409, "user exists")
+    import secrets
+    token = secrets.token_urlsafe(32)
+    users.append({"username": username, "role": role, "token": token, "created_at": _now_ts(), "dashboard_state": {}})
+    _save_users(users)
+    return {"ok": True, "username": username, "token": token}
+
+
+@app.get("/api/users/{username}/state")
+async def api_user_state(username: str):
+    """Get user-specific dashboard state."""
+    user = _find_user(username)
+    if not user:
+        raise HTTPException(404, "user not found")
+    return {"username": username, "state": user.get("dashboard_state", {})}
+
+
+@app.post("/api/users/{username}/state")
+async def api_user_state_update(username: str, request: Request):
+    """Update user-specific dashboard state."""
+    body = {}
+    try: body = await request.json()
+    except Exception: pass
+    users = _load_users()
+    for u in users:
+        if u.get("username", u.get("name", "")) == username:
+            u.setdefault("dashboard_state", {}).update(body)
+            _save_users(users)
+            return {"ok": True, "username": username, "state": u["dashboard_state"]}
+    raise HTTPException(404, "user not found")
 
 
 if __name__ == "__main__":

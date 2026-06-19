@@ -98,8 +98,23 @@ def test_agent_easter_egg_with_auth(client, auth_header):
 
 
 # ============================================================
-# EXPORT endpoints
+# EXPORT endpoints (require auth)
 # ============================================================
+
+def test_revenue_export_locked(client):
+    r = client.get("/api/revenue/export")
+    assert r.status_code == 401
+
+
+def test_disk_rescue_export_locked(client):
+    r = client.get("/api/disk/rescue/export")
+    assert r.status_code == 401
+
+
+def test_predictions_export_locked(client):
+    r = client.get("/api/predictions/export")
+    assert r.status_code == 401
+
 
 def test_revenue_export_markdown(client, auth_header):
     r = client.get("/api/revenue/export", headers=auth_header)

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Lab Command Center — Sovereign Dashboard for Local AI Builders</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --card: #151520;
+            --accent: #00d4ff;
+            --accent2: #7c4dff;
+            --text: #e0e0ff;
+            --muted: #8888aa;
+            --success: #00ff88;
+            --danger: #ff4466;
+        }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        header { text-align: center; padding: 3rem 0; }
+        h1 { font-size: 3rem; margin: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        h2 { font-size: 1.8rem; margin-top: 2rem; color: var(--accent); }
+        p.tagline { font-size: 1.3rem; color: var(--muted); margin: 1rem 0 2rem; }
+        .btn {
+            display: inline-block; padding: 0.8rem 2rem; margin: 0.5rem;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            color: #000; text-decoration: none; font-weight: bold;
+            border-radius: 8px; transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3); }
+        .btn.secondary { background: var(--card); color: var(--text); border: 1px solid var(--accent); }
+        .gates { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin: 3rem 0; }
+        .gate { background: var(--card); padding: 1.5rem; border-radius: 12px; border-left: 4px solid var(--accent); }
+        .gate h3 { margin: 0 0 0.5rem; color: var(--accent); }
+        .gate p { margin: 0.5rem 0; color: var(--muted); font-size: 0.95rem; }
+        .gate .score { font-size: 2rem; font-weight: bold; color: var(--success); }
+        .gate.locked { border-left-color: var(--danger); }
+        .pricing { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; margin: 3rem 0; }
+        .price-card { background: var(--card); padding: 2rem; border-radius: 12px; text-align: center; }
+        .price-card.popular { outline: 2px solid var(--accent); position: relative; }
+        .price-card.popular::after { content: "MOST POPULAR"; position: absolute; top: -12px; right: 1rem; background: var(--accent); color: #000; font-size: 0.7rem; padding: 0.2rem 0.8rem; border-radius: 12px; }
+        .price { font-size: 2.5rem; font-weight: bold; color: var(--success); }
+        .price span { font-size: 1rem; color: var(--muted); }
+        .features { list-style: none; padding: 0; margin: 1rem 0; }
+        .features li { padding: 0.3rem 0; }
+        .features li::before { content: "✓ "; color: var(--success); }
+        .screenshot { background: var(--card); border-radius: 12px; padding: 1rem; margin: 1rem 0; }
+        .screenshot img { max-width: 100%; border-radius: 8px; }
+        .install { background: linear-gradient(90deg, var(--accent), var(--accent2)); padding: 2rem; border-radius: 12px; margin: 3rem 0; }
+        .install h2 { color: #000; margin-top: 0; }
+        .install pre { background: #000; color: var(--success); padding: 1rem; border-radius: 8px; overflow-x: auto; }
+        footer { text-align: center; padding: 2rem; color: var(--muted); font-size: 0.9rem; }
+        @media (prefers-color-scheme: light) {
+            :root { --bg: #fafafa; --card: #fff; --text: #111; --muted: #555; }
+            .btn.secondary { border: 1px solid var(--accent); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI Lab Command Center</h1>
+            <p class="tagline">Sovereign dashboard for local AI builders — no cloud, no vendor lock-in, full control over your GPU inferencing stack</p>
+            <a href="/dashboard" class="btn">Launch Dashboard</a>
+            <a href="#install" class="btn secondary">Install in 60s</a>
+        </header>
+
+        <h2>8-Gate Excellence Framework</h2>
+        <div class="gates">
+            <div class="gate">
+                <div class="score">3/10</div>
+                <h3>Performance Baseline</h3>
+                <p>Disk rescue cold path optimized to 24ms with 3-tier caching. Cache TTL extended to 30 minutes.</p>
+            </div>
+            <div class="gate">
+                <div class="score">3/10</div>
+                <h3>Real-Time Push</h3>
+                <p>WebSocket infrastructure ready. Epic HUD panel receives live updates for revenue, disk, and service status.</p>
+            </div>
+            <div class="gate locked">
+                <div class="score">2/10</div>
+                <h3>Auth & Sovereignty</h3>
+                <p>JWT auth hardened. Revenue, predictions, and export endpoints now require Bearer token.</p>
+            </div>
+            <div class="gate">
+                <div class="score">3/10</div>
+                <h3>Persistence & Trends</h3>
+                <p>Revenue history persisted. Disk trend analysis active. Trends API exposes 7d/30d deltas.</p>
+            </div>
+            <div class="gate locked">
+                <div class="score">1/10</div>
+                <h3>Export & Portability</h3>
+                <p>Markdown/PDF/TAR.GZ export endpoints implemented. Require auth.</p>
+            </div>
+            <div class="gate">
+                <div class="score">5/10</div>
+                <h3>UX Polish</h3>
+                <p>Ctrl+K command palette, keyboard nav, fuzzy search, mobile responsive.</p>
+            </div>
+            <div class="gate">
+                <div class="score">4/10</div>
+                <h3>Observability</h3>
+                <p>Prometheus metrics registered. Per-endpoint request timing. Rate limiting active.</p>
+            </div>
+            <div class="gate locked">
+                <div class="score">1/10</div>
+                <h3>Testing Depth</h3>
+                <p>21 contract tests passing. Unit test coverage expanding.</p>
+            </div>
+            <div class="gate locked">
+                <div class="score">3/10</div>
+                <h3>Deployment & Onboard</h3>
+                <p>Systemd service running. Install script in progress.</p>
+            </div>
+            <div class="gate locked">
+                <div class="score">2/10</div>
+                <h3>Sellability</h3>
+                <p>Landing page live. Pricing defined. Launch assets in progress.</p>
+            </div>
+        </div>
+
+        <h2>Screenshots</h2>
+        <div class="screenshot">
+            <img src="/static/landing/epic-hud.png" alt="Epic HUD showing revenue scores, disk trends, and service status" 
+                 style="width:100%;max-height:400px;object-fit:cover;" onerror="this.style.display='none'">
+            <p style="text-align:center;color:var(--muted);margin-top:0.5rem;">Epic Command Center — real-time lab metrics</p>
+        </div>
+
+        <h2>Pricing</h2>
+        <div class="pricing">
+            <div class="price-card">
+                <h3>Lifetime License</h3>
+                <div class="price">$297<span> one-time</span></div>
+                <ul class="features">
+                    <li>Full dashboard access</li>
+                    <li>Unlimited repos/agents</li>
+                    <li>Export endpoints</li>
+                    <li>Self-host forever</li>
+                </ul>
+                <a href="/dashboard" class="btn">Get Lifetime Access</a>
+            </div>
+            <div class="price-card popular">
+                <h3>Managed Service</h3>
+                <div class="price">$29<span>/mo</span></div>
+                <ul class="features">
+                    <li>Everything in Lifetime</li>
+                    <li>Weekly health checks</li>
+                    <li>Backup automation</li>
+                    <li>Email alerts</li>
+                    <li>Priority support</li>
+                </ul>
+                <a href="/dashboard" class="btn">Start Managed</a>
+            </div>
+            <div class="price-card">
+                <h3>Team License</h3>
+                <div class="price">$997<span>/mo</span></div>
+                <ul class="features">
+                    <li>Up to 10 users</li>
+                    <li>User isolation</li>
+                    <li>SSO/OIDC ready</li>
+                    <li>Dedicated setup</li>
+                    <li>Custom integrations</li>
+                </ul>
+                <a href="/dashboard" class="btn">Contact Sales</a>
+            </div>
+        </div>
+
+        <div class="install" id="install">
+            <h2>Install in 60 Seconds</h2>
+            <p style="color:#000;">One-command install on any Linux workstation with Python 3.10+ and systemd:</p>
+            <pre>curl -fsSL https://raw.githubusercontent.com/scottgault/ai-lab/main/install.sh | bash</pre>
+            <p style="color:#000;margin-top:1rem;"><strong>Or demo first:</strong> Run with --demo flag for mock data without GPU hardware.</p>
+        </div>
+
+        <footer>
+            <p>Built by Scott Gault • Powered by FastAPI, Ollama, ComfyUI • Running on V100/P40/3060</p>
+            <p><a href="https://github.com/scottgault/ai-lab" style="color:var(--accent);">GitHub</a> • <a href="/api/dashboard/smoke" style="color:var(--accent);">API Status</a></p>
+        </footer>
+    </div>
+</body>
+</html>

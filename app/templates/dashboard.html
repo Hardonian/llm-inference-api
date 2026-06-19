@@ -22,7 +22,30 @@
     .epic-sub { font-size: 12px; color: var(--muted, #8a8f98); margin-top: 4px; }
     .badge.pulse { animation: pulse 2s infinite; }
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
-  </style>
+  
+    /* R8/R9: Epic HUD polish */
+    .epic-value { font-weight: 700; }
+    .risk-critical { color: #ff4757; }
+    .risk-high { color: #ffa502; }
+    .risk-medium { color: #ffd43b; }
+    .risk-low { color: #2ed573; }
+    .command-palette-icon { margin-right: 8px; font-size: 14px; }
+    .command-palette-item.recent { border-left: 3px solid var(--accent, #00f2ff); }
+    .command-palette-item.recent::after { content: 'recent'; font-size: 10px; color: var(--accent); margin-left: 4px; }
+    .trend-arrow-up { color: #2ed573; }
+    .trend-arrow-down { color: #ff4757; }
+    .trend-arrow-flat { color: var(--muted, #8a8f98); }
+    /* R9: Mobile responsive */
+    @media (max-width: 768px) {
+      .command-palette { width: 95vw; top: 20px; }
+      .epic-card-row { flex-direction: column; }
+      .epic-panel { padding: 8px; }
+    }
+    /* R10: Insights panel */
+    .insights-card { background: var(--panel-bg, rgba(30,32,40,0.8)); border-radius: 8px; padding: 12px; margin: 8px 0; border-left: 3px solid var(--accent, #00f2ff); }
+    .insights-next-action { color: #ffd43b; margin: 4px 0; }
+
+</style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
@@ -277,6 +300,8 @@
             <button class="btn" id="epic-predict-btn">📈 Predictions</button>
             <button class="btn" id="epic-improve-btn">🚀 Improve</button>
             <button class="btn" id="epic-packs-btn">📦 Packs</button>
+            <button class="btn" id="epic-trends-btn">📊 Trends</button>
+            <button class="btn" id="epic-insights-btn">🎯 Insights</button>
             <button class="btn" id="epic-command-btn">⌘ Command</button>
           </div>
           <div id="epic-output" class="log-output" style="max-height:300px;overflow:auto;margin-top:12px"></div>

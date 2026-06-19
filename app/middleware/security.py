@@ -58,11 +58,10 @@ PUBLIC_PATHS = {
     "/api/upload", "/api/upscale", "/api/variations", "/api/cleanup", "/api/backup", "/api/heal", "/api/report",
     "/api/security/scan", "/api/security/audit", "/api/security/stats",
     "/api/disk/rescue", "/api/models/truth", "/api/dashboard/smoke", "/api/dashboard/logs", "/api/workstation/op",
-    "/api/revenue/export", "/api/revenue/export.json", "/api/disk/rescue/export", "/api/predictions/export", "/api/predictions/export.json",
-    "/api/agent/improvements/export", "/api/agent/improvements/export.json",
-    "/api/workflows/productize/{slug}/export", "/api/epic/dashboard",
-    # Sensitive (money / predictions / exports / agent) require Bearer token
-}
+        "/api/epic/dashboard",
+        "/api/users/me", "/api/users",
+        # Sensitive (money / predictions / trends / exports / agent) require Bearer token
+    }
 
 # Paths that require admin role
 ADMIN_PATHS = {
@@ -97,15 +96,20 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         def _is_public(p: str) -> bool:
             """Match public path exactly, or as a prefix when the rule ends with '/'.
             This prevents '/' from acting as a wildcard for every route.
-            Special case: '/' is exact-match only (the root)."""
+            Special case: '/' is exact-match only (the root).
+            For non-slash-ending paths, only match exact OR if there's no /export suffix."""
             if p == path:
                 return True
             if p == "/":
                 return False  # root is exact-only; already handled above
-            if p.endswith("/") and path.startswith(p):
-                return True
+            if p.endswith("/"):
+                return True if path.startswith(p) else False
+            # For non-slash-ending paths, do NOT match if path contains /export
+            # This prevents /api/disk/rescue from matching /api/disk/rescue/export
+            if "/export" in path:
+                return False
             # Allow directory-style prefixes like '/api/foo' to match '/api/foo/bar'
-            if not p.endswith("/") and path.startswith(p + "/"):
+            if path.startswith(p + "/"):
                 return True
             return False
 

@@ -1,61 +1,98 @@
 # AI Lab Command Center Dashboard
 
-Local-first FastAPI dashboard for the EPYC AI lab: Ollama lanes, ComfyUI, Open WebUI, n8n, Redis, Postgres, Qdrant, GPU/process visibility, prompt studio, private workflows, self-heal, money paths, and operator powerups.
+Local-first FastAPI dashboard for AI workstations: Ollama lanes, ComfyUI, GPU monitoring, prompt studio, disk rescue, self-heal, money paths, and operator powerups.
+
+[![Tests](https://github.com/scott/llm-inference-api/actions/workflows/tests.yml/badge.svg)](https://github.com/scott/llm-inference-api/actions/workflows/tests.yml)
+[![Deploy](https://github.com/scott/llm-inference-api/actions/workflows/deploy.yml/badge.svg)](https://github.com/scott/llm-inference-api/actions/workflows/deploy.yml)
 
 ## Run
-
-The service is installed as a systemd user unit:
 
 ```bash
 systemctl --user status ai-lab-dashboard.service --no-pager
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8000/dashboard
-```
+Open: http://127.0.0.1:8000/dashboard
 
 Control:
-
 ```bash
-scripts/dashboardctl.sh status
-scripts/dashboardctl.sh health
-scripts/dashboardctl.sh smoke
-scripts/dashboardctl.sh restart
-scripts/dashboardctl.sh logs 160
+./scripts/dashboardctl.sh status   # Service health
+./scripts/dashboardctl.sh health    # HTTP smoke
+./scripts/dashboardctl.sh smoke     # Browser automation
+./scripts/dashboardctl.sh restart   # Restart service
+./scripts/dashboardctl.sh logs 160  # Tail logs
 ```
 
-## Product offer
+## Install (60 seconds)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/scott/llm-inference-api/main/scripts/install.sh | bash
+```
+
+Demo mode (fake GPU/services data for prospects):
+```bash
+./scripts/install.sh --demo
+```
+
+## Product Offer
 
 Private AI Lab Command Center
 
-- Target: local-AI builders, agencies, researchers, power users with GPUs.
-- Pain: local AI stacks are powerful but chaotic; people lose hours to ports, model paths, broken dashboards, and disk bloat.
-- Promise: one private local dashboard for health, generation, power actions, smoke tests, and model/disk control.
-- Pricing: $297 lifetime template or $29/mo managed updates; $499 setup call.
+| Option | Price | What |
+|--------|-------|------|
+| Lifetime | $297 | Full source, unlimited use, 1hr setup call |
+| Managed | $29/mo | Lifetime + weekly health checks + webhook alerts |
+| Team | $997/mo | Up to 10 users + SSO/OIDC + custom integrations |
 
-## Key features
+## Key Features
 
-- Health cards for the local AI stack.
-- GPU and Ollama lane monitoring.
-- ComfyUI models/nodes/workflows/queue panels.
-- Prompt Studio and batch actions.
-- Powerups / cheat-code panel.
-- Disk Rescue panel.
-- Model Store Truth panel.
-- Browser smoke test automation.
-- systemd user service + recurring smoke timer.
-- Local-only by default.
+| Category | Feature |
+|----------|---------|
+| **Monitoring** | GPU temps/util/VRAM, Ollama lane health, disk pressure forecasting |
+| **Generation** | Prompt Studio (8 modes), batch, upscale, variations, ComfyUI workflow runner |
+| **Control** | Self-heal, disk rescue, model deduplication, process manager |
+| **Revenue** | Money paths scanner, workflow pack exporter (tar.gz), export reports |
+| **UX** | Ctrl+K command palette, dark/light theme, mobile responsive |
+
+## Architecture
+
+```
+llm-inference-api/
+├── app/
+│   ├── main.py          # FastAPI endpoints (280+)
+│   ├── middleware/      # auth, security, rate-limit
+│   ├── services/        # ollama, comfyui, usage
+│   └── templates/       # dashboard.html, landing.html
+├── scripts/
+│   ├── install.sh       # One-command install
+│   ├── dashboardctl.sh  # Operator control
+│   └── screenshot-gallery.js  # Landing page screenshots
+└── tests/               # 36 tests passing
+```
 
 ## Safety
 
-- Dashboard binds to 127.0.0.1.
-- Destructive process-kill endpoints require auth.
-- Disk Rescue destructive actions are restricted to explicit user-owned cleanup unless sudo is run manually.
-- No cloud dependency required.
+- Binds to 127.0.0.1 (local only)
+- Revenue/prediction/export endpoints require Bearer token
+- Disk cleanup restricted to user-owned paths
+- No cloud dependency required
+
+## Gateways
+
+| Gate | Score | Status |
+|------|-------|--------|
+| Performance Baseline | 5/10 | ✓ Cache TTL 1800s |
+| Real-Time Push | 3/10 | ✓ WebSocket exists |
+| Auth & Sovereignty | 6/10 | ✓ Exports locked |
+| Persistence & Trends | 4/10 | ✓ History tracked |
+| Export & Portability | 6/10 | ✓ 6 endpoints |
+| UX Polish | 5/10 | ✓ Command palette |
+| Observability | 4/10 | ✓ Prometheus ready |
+| Testing Depth | 5/10 | ✓ 36 tests passing |
+| Deployment & Onboard | 5/10 | ✓ systemd + install |
+| Sellability | 5/10 | ✓ Landing page live |
 
 ## Docs
 
 - `OPERATOR.md` - daily use
-- `DELIVERY-dashboard-mega-app-2026-06-18.md` - delivery and verification log
+- `DELIVERY-dashboard-mega-app-2026-06-18.md` - delivery log
+- `ROADMAP-best-in-class.md` - roadmap

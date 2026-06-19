@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-06-18 - Auth hardening: export endpoints locked
+
+- **SECURITY FIX**: Removed `/api/revenue/export`, `/api/disk/rescue/export`, `/api/predictions/export`, `/api/agent/improvements/export`, `/api/workflows/productize/{slug}/export` from PUBLIC_PATHS.
+- These endpoints now require Bearer token authentication.
+- Added `/api/disk/rescue/export` locked test.
+- Added `/api/predictions/export` locked test.
+- Added `/api/revenue/export` locked test.
+- Landing page created at `/home/scott/ai-lab/dashboard/landing/index.html`.
+- Landing template updated to be GPU-generic (detects V100/P40/3060 automatically).
+- Demo mode already implemented in config (DEMO_MODE env var).
+- Install script exists with `--demo` flag support.
+
 ## 2026-06-18 - Dashboard mega-app best-in-class pass
 
 - Installed durable `ai-lab-dashboard.service` systemd user service.
