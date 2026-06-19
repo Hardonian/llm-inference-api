@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # AI Lab Command Center - One-command installer
-# Usage:  curl -fsSL <url>/install.sh | bash
-# Or:     ./scripts/install.sh [--demo] [--no-service]
+# Usage:  curl -fsSL https://raw.githubusercontent.com/Hardonian/ai-lab-command-center/main/install.sh | bash
+# Or:     ./scripts/install.sh [--demo] [--docker] [--no-service]
 set -Eeuo pipefail
 
-REPO="${REPO:-/home/scott/ai-workspace/repos/llm-inference-api}"
+REPO="${REPO:-https://github.com/Hardonian/ai-lab-command-center}"
 PYTHON="${PYTHON:-python3}"
-VENV="${REPO}/.venv"
-LOG_PREFIX="[ai-lab-install]"
+LOG_PREFIX="[ai-lab]"
 
 DEMO=false
 NO_SERVICE=false
@@ -30,56 +29,54 @@ if [[ "$PY_OK" != "1" ]]; then
 fi
 log "Python OK: $($PYTHON --version)"
 
-# 2. Create venv if needed
+# 2. Clone repo if needed
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="${SCRIPT_DIR}"
+if [[ "$SCRIPT_DIR" == "/tmp"* ]]; then
+  log "Cloning repo..."
+  git clone "$REPO" 2>/dev/null || curl -L "$REPO/archive/main.tar.gz" | tar xz
+  cd ai-lab-command-center && REPO_DIR="$(pwd)"
+fi
+
+# 3. Create venv if needed
+VENV="${REPO_DIR}/.venv"
 if [[ ! -d "$VENV" ]]; then
-  log "Creating venv at $VENV..."
+  log "Creating venv..."
   $PYTHON -m venv "$VENV" || fail "venv creation failed"
-else
-  log "Venv exists at $VENV"
 fi
 
-# 3. Install deps
+# 4. Install deps
 log "Installing dependencies..."
-"$VENV/bin/pip" install --quiet --upgrade pip || fail "pip upgrade failed"
-"$VENV/bin/pip" install --quiet -r "$REPO/requirements.txt" 2>/dev/null || \
-  "$VENV/bin/pip" install --quiet fastapi uvicorn[standard] httpx pydantic pydantic-settings \
-    PyJWT python-multipart jinja2 psutil prometheus-client redis aiofiles 2>/dev/null || \
-    fail "dependency install failed"
+"$VENV/bin/pip" install --quiet --upgrade pip 2>/dev/null || true
+"$VENV/bin/pip" install fastapi uvicorn[standard] httpx pydantic PyJWT python-multipart jinja2 psutil prometheus-client redis aiofiles 2>/dev/null || fail "pip install failed"
 
-# 4. Create .env if missing
-if [[ ! -f "$REPO/.env" ]]; then
-  log "Creating .env from example..."
-  cp "$REPO/.env.example" "$REPO/.env"
-  # Generate a random SECRET_KEY
-  SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-  sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$SECRET|" "$REPO/.env"
+# 5. Create .env if missing
+if [[ ! -f "${REPO_DIR}/.env" ]]; then
+  log "Creating .env..."
+  cp "${REPO_DIR}/.env.example" "${REPO_DIR}/.env" 2>/dev/null || touch "${REPO_DIR}/.env"
+  SECRET=$($PYTHON -c "import secrets; print(secrets.token_urlsafe(32))")
+  sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$SECRET/" "${REPO_DIR}/.env" 2>/dev/null || echo "SECRET_KEY=$SECRET" >> "${REPO_DIR}/.env"
 fi
 
-# 5. Demo mode toggle
+# 6. Demo mode
 if $DEMO; then
-  log "Demo mode enabled (will use fake GPU/services data)"
-  sed -i 's/^DEMO_MODE=.*/DEMO_MODE=true/' "$REPO/.env"
+  log "Demo mode enabled"
+  sed -i 's/^DEMO_MODE=.*/DEMO_MODE=true/' "${REPO_DIR}/.env" 2>/dev/null || echo "DEMO_MODE=true" >> "${REPO_DIR}/.env"
 fi
 
-# 6. Install systemd units (user-level, no sudo)
+# 7. Start (or show manual start)
 if ! $NO_SERVICE; then
-  log "Installing systemd units..."
-  mkdir -p ~/.config/systemd/user
-  for unit in ai-lab-dashboard.service ai-lab-dashboard-smoke.service ai-lab-dashboard-smoke.timer; do
-    if [[ -f "$REPO/deploy/systemd/user/$unit" ]]; then
-      cp "$REPO/deploy/systemd/user/$unit" ~/.config/systemd/user/
-      log "  installed $unit"
-    fi
-  done
-  systemctl --user daemon-reload || log "WARNING: systemctl --user not available"
   if command -v systemctl >/dev/null && systemctl --user daemon-reload 2>/dev/null; then
-    systemctl --user enable --now ai-lab-dashboard.service 2>&1 | sed "s/^/$LOG_PREFIX  /"
-    systemctl --user enable --now ai-lab-dashboard-smoke.timer 2>&1 | sed "s/^/$LOG_PREFIX  /"
-    log "Service enabled and started"
+    log "Installing systemd service..."
+    mkdir -p ~/.config/systemd/user
+    cp "${REPO_DIR}/deploy/systemd/user/"*.service ~/.config/systemd/user/ 2>/dev/null || true
+    cp "${REPO_DIR}/deploy/systemd/user/"*.timer ~/.config/systemd/user/ 2>/dev/null || true
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now ai-lab-dashboard.service 2>/dev/null || true
+    log "Running as systemd user service"
   else
-    log "systemctl not available; start manually: $VENV/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    log "Run manually: $VENV/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000"
   fi
 fi
 
-log ""
-log "Install complete. Open http://127.0.0.1:8000/dashboard"
+log "Install complete! Open http://127.0.0.1:8000/dashboard"

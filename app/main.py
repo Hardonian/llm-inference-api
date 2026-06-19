@@ -2822,58 +2822,241 @@ async def api_create_token(req: Request):
 
 
 # ============================================================
-# R8: WEBSOCKET PUSH FOR EPIC EVENTS
+# GATE 2: REAL-TIME WEBSOCKET PUSH (Event-driven, multi-type, state sync)
 # ============================================================
-_EPIC_WS_SUBSCRIBERS = []
+import uuid
+_EPIC_WS_SUBSCRIBERS: Dict[str, Dict] = {}  # ws_id -> {"ws": WebSocket, "subscribed": set, "last_seq": 0, "auth": bool}
+_EPIC_EVENT_SEQ = 0
+
+EVENT_TYPES = {
+    "tick",           # Periodic full state (every 15s)
+    "revenue_change", # Revenue readiness changed
+    "disk_alert",     # Disk risk threshold crossed
+    "service_down",   # Service went down/up
+    "prediction_update", # New prediction added/changed
+    "agent_complete", # Agent command finished
+    "heartbeat",      # Ping/pong
+    "state_sync",     # Full state on reconnect
+}
+
+async def _get_ws_auth(websocket) -> bool:
+    """Extract and validate auth token from WS connection."""
+    query = websocket.query_params
+    token = query.get("token")
+    if not token:
+        auth_header = websocket.headers.get("authorization", "")
+        for h in auth_header.split():
+            if h.startswith("Bearer "):
+                token = h[7:]
+                break
+    if not token:
+        return False
+    return token == _dashboard_token()
 
 
 @app.websocket("/ws/epic")
-async def epic_ws(websocket):
+async def epic_ws(websocket: WebSocket):
+    """Enhanced WebSocket with event types, auth, state sync, heartbeats."""
+    ws_id = str(uuid.uuid4())[:8]
+    logger.debug(f"ws_connect: ws_id={ws_id}, path={websocket.url.path}, query={websocket.query_params}")
     await websocket.accept()
-    _EPIC_WS_SUBSCRIBERS.append(websocket)
+    
+    # Auth check - SIMPLIFIED for debugging
+    query = websocket.query_params
+    token = query.get("token")
+    expected = _dashboard_token()
+    logger.debug(f"ws_auth: token={token[:12] if token else None}, expected={expected[:12]}, match={token==expected}")
+    if token != expected:
+        await websocket.send_json({"type": "error", "code": "UNAUTHORIZED", "message": "Valid token required"})
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+    
+    # Client can send initial state for sync
+    subscribed = set(EVENT_TYPES)
+    last_seq = 0
+    try:
+        init_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5)
+        if init_msg.get("type") == "hello":
+            subscribed = set(init_msg.get("subscribe", EVENT_TYPES))
+            last_seq = init_msg.get("last_seq", 0)
+    except Exception:
+        pass
+    
+    _EPIC_WS_SUBSCRIBERS[ws_id] = {
+        "ws": websocket,
+        "subscribed": subscribed,
+        "last_seq": last_seq,
+        "auth": True,
+        "connected_at": _now_ts(),
+    }
+    
+    # Send state sync on connect
+    await _send_state_sync(websocket, ws_id)
+    
     try:
         while True:
             try:
-                await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                msg = await asyncio.wait_for(websocket.receive_json(), timeout=30)
+                await _handle_ws_message(ws_id, msg)
             except asyncio.TimeoutError:
-                try:
-                    await websocket.send_text("{}")
-                except Exception:
-                    break
-    except Exception:
-        pass
+                await websocket.send_json({"type": "heartbeat", "ts": _now_ts(), "seq": _EPIC_EVENT_SEQ})
+            except Exception:
+                break
     finally:
-        if websocket in _EPIC_WS_SUBSCRIBERS:
-            _EPIC_WS_SUBSCRIBERS.remove(websocket)
+        _EPIC_WS_SUBSCRIBERS.pop(ws_id, None)
+        logger.debug(f"ws_disconnect: {ws_id}")
 
 
-async def _epic_broadcast(payload):
-    import json
-    msg = json.dumps(payload, default=str)
-    for ws in list(_EPIC_WS_SUBSCRIBERS):
+async def _send_state_sync(websocket, ws_id: str):
+    """Send full current state to a newly connected/reconnecting client."""
+    try:
+        snap = await asyncio.to_thread(_system_snapshot_cached)
+        rev = await asyncio.to_thread(_revenue_dashboard_cached)
+        pred = await asyncio.to_thread(_predictive_monitoring_cached)
+        imp = await asyncio.to_thread(_self_improvement_suggestions_cached)
+        packs = await asyncio.to_thread(_workflow_productize_inventory_cached)
+        
+        global _EPIC_EVENT_SEQ
+        _EPIC_EVENT_SEQ += 1
+        
+        await websocket.send_json({
+            "type": "state_sync",
+            "seq": _EPIC_EVENT_SEQ,
+            "ts": _now_ts(),
+            "payload": {
+                "revenue": rev,
+                "predictions": pred,
+                "improvements": imp,
+                "workflows": packs,
+                "system": snap,
+            }
+        })
+        _EPIC_WS_SUBSCRIBERS[ws_id]["last_seq"] = _EPIC_EVENT_SEQ
+    except Exception as e:
+        logger.warning(f"state_sync_failed: {e}")
+
+
+async def _handle_ws_message(ws_id: str, msg: dict):
+    """Handle incoming client messages (subscribe, ping, etc.)"""
+    sub = _EPIC_WS_SUBSCRIBERS.get(ws_id)
+    if not sub:
+        return
+    msg_type = msg.get("type")
+    if msg_type == "subscribe":
+        sub["subscribed"] = set(msg.get("events", EVENT_TYPES))
+    elif msg_type == "ping":
+        ws = sub["ws"]
         try:
-            await ws.send_text(msg)
+            await ws.send_json({"type": "pong", "ts": _now_ts()})
         except Exception:
-            if ws in _EPIC_WS_SUBSCRIBERS:
-                _EPIC_WS_SUBSCRIBERS.remove(ws)
+            pass
+    elif msg_type == "request_sync":
+        await _send_state_sync(sub["ws"], ws_id)
+
+
+async def _epic_broadcast(event_type: str, payload: dict, target_subs: Optional[set] = None):
+    """Broadcast event to all subscribers interested in this event type."""
+    if event_type not in EVENT_TYPES:
+        return
+    global _EPIC_EVENT_SEQ
+    _EPIC_EVENT_SEQ += 1
+    msg = {
+        "type": event_type,
+        "seq": _EPIC_EVENT_SEQ,
+        "ts": _now_ts(),
+        "payload": payload,
+    }
+    import json
+    msg_json = json.dumps(msg, default=str)
+    
+    for ws_id, sub in list(_EPIC_WS_SUBSCRIBERS.items()):
+        if target_subs and event_type not in sub["subscribed"]:
+            continue
+        try:
+            await sub["ws"].send_text(msg_json)
+            sub["last_seq"] = _EPIC_EVENT_SEQ
+        except Exception:
+            _EPIC_WS_SUBSCRIBERS.pop(ws_id, None)
+
+
+async def _epic_emit_revenue_change(change: dict):
+    await _epic_broadcast("revenue_change", change)
+
+async def _epic_emit_disk_alert(alert: dict):
+    await _epic_broadcast("disk_alert", alert)
+
+async def _epic_emit_service_down(service: dict):
+    await _epic_broadcast("service_down", service)
+
+async def _epic_emit_prediction_update(update: dict):
+    await _epic_broadcast("prediction_update", update)
+
+async def _epic_emit_agent_complete(result: dict):
+    await _epic_broadcast("agent_complete", result)
 
 
 async def _epic_push_loop():
+    """Enhanced push loop with event detection and selective broadcasting."""
+    last_revenue = None
+    last_disk_risk = None
+    last_services = {}
+    last_predictions = []
+    
     while True:
         try:
-            snap = await asyncio.to_thread(_system_snapshot)
-            rev = await asyncio.to_thread(_revenue_dashboard)
-            pred = await asyncio.to_thread(_predictive_monitoring)
-            await _epic_broadcast({
-                "type": "tick",
-                "ts": _now_ts(),
+            snap = await asyncio.to_thread(_system_snapshot_cached)
+            rev = await asyncio.to_thread(_revenue_dashboard_cached)
+            pred = await asyncio.to_thread(_predictive_monitoring_cached)
+            
+            # --- Tick event (always broadcast) ---
+            await _epic_broadcast("tick", {
                 "revenue_readiness": rev.get("overall_readiness"),
                 "predictions": pred.get("predictions", []),
-                "services_ok": sum(1 for s in snap.get("services", []) if s.get("ok")),
+                "services_ok": sum(1 for s in snap.get("services", []) if s.get("ok") or s.get("status") == "ok"),
+                "services_total": len(snap.get("services", [])),
             })
-        except Exception:
-            pass
+            
+            # --- Revenue change detection ---
+            curr_revenue = rev.get("overall_readiness")
+            if last_revenue is not None and curr_revenue != last_revenue:
+                await _epic_emit_revenue_change({
+                    "previous": last_revenue,
+                    "current": curr_revenue,
+                    "delta": curr_revenue - last_revenue,
+                })
+            last_revenue = curr_revenue
+            
+            # --- Disk risk detection ---
+            pred_risk = max(({"low":0,"med":1,"high":2,"critical":3}.get(p.get("risk","low"),0) for p in pred.get("predictions", [])), default=0)
+            if last_disk_risk is not None and pred_risk != last_disk_risk:
+                await _epic_emit_disk_alert({
+                    "previous_risk": {0:"low",1:"med",2:"high",3:"critical"}.get(last_disk_risk, "low"),
+                    "current_risk": {0:"low",1:"med",2:"high",3:"critical"}.get(pred_risk, "low"),
+                    "worst_path": max(pred.get("predictions", []), key=lambda p: {"low":0,"med":1,"high":2,"critical":3}.get(p.get("risk","low"),0), default={}).get("path", "unknown"),
+                })
+            last_disk_risk = pred_risk
+            
+            # --- Service up/down detection ---
+            curr_services = {s.get("name"): s.get("ok") or s.get("status") == "ok" for s in snap.get("services", [])}
+            for name, ok in curr_services.items():
+                if name in last_services and last_services[name] != ok:
+                    await _epic_emit_service_down({"service": name, "up": ok, "timestamp": _now_ts()})
+            last_services = curr_services
+            
+            # --- Prediction updates ---
+            curr_preds = pred.get("predictions", [])
+            if curr_preds != last_predictions:
+                await _epic_emit_prediction_update({
+                    "predictions": curr_preds,
+                    "changed": len(curr_preds) != len(last_predictions),
+                })
+            last_predictions = curr_preds
+            
+        except Exception as e:
+            logger.debug(f"epic_push_loop_error: {e}")
         await asyncio.sleep(15)
+
+
 
 
 
@@ -3088,3 +3271,7 @@ async def api_user_state_update(username: str, request: Request):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# PDF/CSV export endpoints
+from app.routes.export_pdf_csv import add_pdf_csv_routes
+add_pdf_csv_routes(app, _revenue_dashboard)

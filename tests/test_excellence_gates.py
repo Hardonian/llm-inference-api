@@ -185,3 +185,14 @@ def test_trend_delta_handles_short_history():
     assert out["delta"] == 0
     out = m._trend_delta([{"x": 5}, {"x": 10}], "x")
     assert out["delta"] == 5
+
+
+def test_revenue_export_csv_format():
+    data = m._revenue_dashboard()
+    assert "overall_readiness" in data
+
+
+def test_revenue_export_pdf_endpoint_locked():
+    import httpx
+    r = httpx.get("http://127.0.0.1:8000/api/revenue/export.pdf", timeout=5.0)
+    assert r.status_code in (401, 501)

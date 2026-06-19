@@ -1,4 +1,5 @@
 """Prometheus metrics middleware."""
+import logging
 import time
 from typing import Callable
 
@@ -7,6 +8,8 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTEN
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
+
+logger = logging.getLogger("llm-inference-api")
 
 
 # Metrics
@@ -92,6 +95,13 @@ class MetricsMiddleware(BaseHTTPMiddleware):
     """Middleware to collect HTTP metrics."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Allow WebSocket upgrade requests to pass through without blocking
+        is_ws = request.headers.get("upgrade", "").lower() == "websocket"
+        path = request.url.path
+        logger.debug(f"metrics_middleware: path={path}, is_ws={is_ws}")
+        if is_ws:
+            logger.debug(f"metrics_middleware: SKIPPING for WS path={path}")
+            return await call_next(request)
         if not settings.metrics_enabled:
             return await call_next(request)
 

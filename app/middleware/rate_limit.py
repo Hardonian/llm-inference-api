@@ -1,4 +1,5 @@
 """Rate limiting middleware using Redis."""
+import logging
 import time
 from typing import Optional
 
@@ -7,6 +8,8 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
+
+logger = logging.getLogger("llm-inference-api")
 
 
 class RateLimiter:
@@ -118,6 +121,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.limiter = RateLimiter(redis_client) if redis_client else None
 
     async def dispatch(self, request: Request, call_next):
+        # Allow WebSocket upgrade requests to pass through without blocking
+        is_ws = request.headers.get("upgrade", "").lower() == "websocket"
+        path = request.url.path
+        logger.debug(f"rate_middleware: path={path}, is_ws={is_ws}")
+        if is_ws:
+            logger.debug(f"rate_middleware: SKIPPING for WS path={path}")
+            return await call_next(request)
         if not self.limiter:
             # Initialize if not provided
             if not self.redis_client:
@@ -128,8 +138,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 )
                 self.limiter = RateLimiter(self.redis_client)
 
-        # Skip rate limiting for health checks
-        if request.url.path in ["/health", "/healthz", "/metrics"]:
+        # Skip rate limiting for health checks and WebSocket upgrades
+        if request.url.path in ["/health", "/healthz", "/metrics", "/ws/epic"]:
+            return await call_next(request)
+        if request.headers.get("upgrade", "").lower() == "websocket":
             return await call_next(request)
 
         # Use API key or IP

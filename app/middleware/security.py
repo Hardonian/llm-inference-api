@@ -11,7 +11,6 @@ logger = logging.getLogger("security")
 
 # Security headers configuration
 SECURITY_HEADERS = {
-    # Content Security Policy - restrictive but functional for local dashboard
     "Content-Security-Policy": (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://fonts.googleapis.com; "
@@ -23,19 +22,12 @@ SECURITY_HEADERS = {
         "base-uri 'self'; "
         "form-action 'self';"
     ),
-    # HSTS - enforce HTTPS in production
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-    # Prevent MIME sniffing
     "X-Content-Type-Options": "nosniff",
-    # Prevent clickjacking
     "X-Frame-Options": "DENY",
-    # XSS protection
     "X-XSS-Protection": "1; mode=block",
-    # Referrer policy
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    # Permissions policy
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
-    # Remove server header
     "Server": "AI-Lab",
 }
 
@@ -58,10 +50,12 @@ PUBLIC_PATHS = {
     "/api/upload", "/api/upscale", "/api/variations", "/api/cleanup", "/api/backup", "/api/heal", "/api/report",
     "/api/security/scan", "/api/security/audit", "/api/security/stats",
     "/api/disk/rescue", "/api/models/truth", "/api/dashboard/smoke", "/api/dashboard/logs", "/api/workstation/op",
-        "/api/epic/dashboard",
-        "/api/users/me", "/api/users",
-        # Sensitive (money / predictions / trends / exports / agent) require Bearer token
-    }
+    "/api/epic/dashboard",
+    "/api/trends", "/api/insights", "/api/p50",
+    "/ws/epic",
+    "/api/users/me", "/api/users",
+    # Sensitive (money / predictions / trends / exports / agent) require Bearer token
+}
 
 # Paths that require admin role
 ADMIN_PATHS = {
@@ -81,41 +75,36 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         request_id = str(uuid.uuid4())[:8]
         request.state.request_id = request_id
+        
+        # Allow WebSocket upgrade requests to pass through without auth check
+        # Auth will be validated in the WebSocket handler itself
+        if request.headers.get("upgrade", "").lower() == "websocket":
+            return await call_next(request)
 
-        # Add security headers to response
         def add_security_headers(response: Response) -> Response:
             for header, value in SECURITY_HEADERS.items():
                 response.headers[header] = value
             return response
 
-        # Skip auth for public paths. GPU process reads are dashboard-facing and
-        # harmless; process-kill/write actions stay protected unless explicitly
-        # authenticated.
         path = request.url.path
 
         def _is_public(p: str) -> bool:
             """Match public path exactly, or as a prefix when the rule ends with '/'.
-            This prevents '/' from acting as a wildcard for every route.
-            Special case: '/' is exact-match only (the root).
-            For non-slash-ending paths, only match exact OR if there's no /export suffix."""
+            Prevents '/' from being a wildcard. Export endpoints are never public."""
             if p == path:
                 return True
             if p == "/":
-                return False  # root is exact-only; already handled above
+                return False
             if p.endswith("/"):
                 return True if path.startswith(p) else False
-            # For non-slash-ending paths, do NOT match if path contains /export
-            # This prevents /api/disk/rescue from matching /api/disk/rescue/export
             if "/export" in path:
                 return False
-            # Allow directory-style prefixes like '/api/foo' to match '/api/foo/bar'
             if path.startswith(p + "/"):
                 return True
             return False
 
         public_dashboard_read = request.method == "GET" and path.startswith("/api/gpu/") and path.endswith("/processes")
         if self.enable_auth and not public_dashboard_read and not any(_is_public(p) for p in PUBLIC_PATHS):
-            # Check for authentication
             auth_header = request.headers.get("Authorization", "")
             if not auth_header.startswith("Bearer "):
                 return JSONResponse(
@@ -124,12 +113,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                     headers={"WWW-Authenticate": "Bearer"},
                 )
             token = auth_header[7:].strip()
-            # Accept either a JWT (validated against secret) or a shared dashboard token
             try:
                 from app.utils.auth import get_dashboard_token as _gdt
                 _dash_tok = _gdt()
                 if token == _dash_tok:
-                    pass  # shared dashboard token OK
+                    pass
                 else:
                     import jwt as _jwt
                     from app.config import settings as _settings
@@ -140,7 +128,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                     content={"detail": f"Invalid token: {_exc}", "error": "INVALID_AUTH"},
                 )
 
-        # Request size limit: dashboard image/model uploads may be large; stream them in endpoint.
         content_length = request.headers.get("Content-Length")
         max_request_bytes = 30 * 1024 * 1024 * 1024 if path.startswith("/api/upload") else 10 * 1024 * 1024
         if content_length and int(content_length) > max_request_bytes:
@@ -149,7 +136,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Request too large", "error": "PAYLOAD_TOO_LARGE"},
             )
 
-        # Process request
         try:
             response = await call_next(request)
         except Exception as e:
@@ -159,34 +145,25 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Internal server error", "error": "INTERNAL_ERROR"},
             )
 
-        # Add security headers
         response = add_security_headers(response)
-
-        # Audit logging
         duration = time.time() - start_time
         await self._audit_log(request, response, duration, request_id)
-
-        # Add request ID to response
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Response-Time"] = f"{duration:.3f}s"
 
         return response
 
     async def _audit_log(self, request: Request, response: Response, duration: float, request_id: str):
-        """Log request/response for audit trail."""
-        # Sanitize sensitive data
         path = request.url.path
         method = request.method
         status = response.status_code
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("User-Agent", "unknown")[:100]
 
-        # Get user info if available
         user_info = "anonymous"
         if hasattr(request.state, "user") and request.state.user:
             user_info = request.state.user.get("sub", "unknown")
 
-        # Log based on severity
         log_data = {
             "request_id": request_id,
             "method": method,
@@ -205,9 +182,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         else:
             logger.info(f"AUDIT: {log_data}")
 
-        # Store in database/file for persistence (implement as needed)
-        # await audit_log_store.save(log_data)
-
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Enhanced rate limiting with per-IP and per-user tracking."""
@@ -216,25 +190,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
         self.burst = burst
-        self.ip_buckets: dict = {}  # In production, use Redis
+        self.ip_buckets: dict = {}
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         client_ip = request.client.host if request.client else "unknown"
         now = time.time()
         minute = int(now / 60)
 
-        # Clean old buckets
         if len(self.ip_buckets) > 10000:
             self.ip_buckets = {
                 k: v for k, v in self.ip_buckets.items()
                 if v["minute"] >= minute - 2
             }
 
-        # Get or create bucket
         bucket_key = f"{client_ip}:{minute}"
         bucket = self.ip_buckets.get(bucket_key, {"count": 0, "minute": minute})
 
-        # Check limit
         bucket["count"] += 1
         self.ip_buckets[bucket_key] = bucket
 
@@ -251,8 +222,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         response = await call_next(request)
-
-        # Add rate limit headers
         remaining = max(0, self.requests_per_minute + self.burst - bucket["count"])
         response.headers["X-RateLimit-Limit"] = str(self.requests_per_minute + self.burst)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
@@ -282,7 +251,6 @@ class CORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         origin = request.headers.get("Origin")
 
-        # Check if origin is allowed
         if origin and origin not in self.allowed_origins:
             return JSONResponse(
                 status_code=403,

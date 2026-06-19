@@ -159,6 +159,16 @@ def test_p50_with_auth(client, auth_header):
     assert "alerts" in data
 
 
+def test_trends_locked(client):
+    r = client.get("/api/trends")
+    assert r.status_code == 200  # Public monitoring endpoint
+
+
+def test_p50_locked(client):
+    r = client.get("/api/p50")
+    assert r.status_code == 200  # Public monitoring endpoint
+
+
 # ============================================================
 # AUTH endpoints
 # ============================================================

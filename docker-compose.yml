@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./dashboard:/home/scott/ai-lab/dashboard
+    environment:
+      - DEMO_MODE=${DEMO_MODE:-true}
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # Optional: comfyui for local generation
+  comfyui:
+    image: ghcr.io/comfyanonymous/ComfyUI
+    ports:
+      - "8188:8188"
+    volumes:
+      - ./comfyui-models:/models
+    restart: unless-stopped
