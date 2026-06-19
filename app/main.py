@@ -2515,6 +2515,42 @@ async def api_workflow_pack_export(slug: str):
                     headers={"Content-Disposition": f"attachment; filename={slug}.tar.gz"})
 
 
+@app.get("/api/epic/dashboard")
+async def api_epic_dashboard():
+    """Aggregated epic HUD payload: revenue + predictions + improvements + workflow packs.
+
+    One HTTP round-trip for the 🔮 Epic Command Center panel.
+    """
+    rev = _revenue_dashboard()
+    pred = _predictive_monitoring()
+    impr = _self_improvement_suggestions()
+    packs = _workflow_productize_inventory()
+    return {
+        "updated_at": _now_ts(),
+        "revenue": {
+            "overall_readiness": rev.get("overall_readiness"),
+            "top_path": (rev.get("paths", [{}])[0] if rev.get("paths") else {}).get("name"),
+            "next_action": rev.get("next_action"),
+        },
+        "predictions": {
+            "high_risk_count": sum(1 for p in pred.get("predictions", []) if p.get("risk") in ("high", "critical")),
+            "items": pred.get("predictions", [])[:5],
+        },
+        "improvements": {
+            "count": len(impr.get("suggestions", [])),
+            "top": impr.get("suggestions", [{}])[0] if impr.get("suggestions") else {},
+        },
+        "workflow_packs": {
+            "ready_count": len(packs.get("ready_packs", [])),
+            "top": packs.get("ready_packs", [{}])[0] if packs.get("ready_packs") else {},
+        },
+        "health": {
+            "services_ok": len([s for s in _system_snapshot().get("services", []) if s.get("status") == "ok"]),
+            "services_total": len(_system_snapshot().get("services", [])),
+        },
+    }
+
+
 # ============================================================
 # R5: PERSISTENCE + TRENDS
 # ============================================================

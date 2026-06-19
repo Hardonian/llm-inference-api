@@ -60,7 +60,7 @@ PUBLIC_PATHS = {
     "/api/disk/rescue", "/api/models/truth", "/api/dashboard/smoke", "/api/dashboard/logs", "/api/workstation/op",
     "/api/revenue/export", "/api/revenue/export.json", "/api/disk/rescue/export", "/api/predictions/export", "/api/predictions/export.json",
     "/api/agent/improvements/export", "/api/agent/improvements/export.json",
-    "/api/workflows/productize/{slug}/export",
+    "/api/workflows/productize/{slug}/export", "/api/epic/dashboard",
     # Sensitive (money / predictions / exports / agent) require Bearer token
 }
 
