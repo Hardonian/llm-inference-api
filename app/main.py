@@ -1266,6 +1266,215 @@ async def api_workflows_productize():
     return await asyncio.to_thread(_workflow_productize_inventory)
 
 
+def _apva_score(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute APVA True Value Yield for a workflow candidate.
+
+    This mirrors the APVA repo formulas locally so the dashboard can answer the
+    money question immediately: did this AI workflow save real human time after
+    reliability and guardrail friction?
+    """
+    name = str(payload.get("name") or "workflow")[:120]
+    skill = str(payload.get("skill_level") or payload.get("skill") or "mid").lower()
+    multipliers = {"junior": 1.5, "mid": 1.0, "senior": 0.7}
+    if skill not in multipliers:
+        raise ValueError("skill_level must be one of: junior, mid, senior")
+
+    def bounded_float(key: str, default: float, low: float = 0.0, high: Optional[float] = None) -> float:
+        value = float(payload.get(key, default))
+        if value < low or (high is not None and value > high):
+            limit = f"{low}..{high}" if high is not None else f">= {low}"
+            raise ValueError(f"{key} must be {limit}")
+        return value
+
+    human_baseline = bounded_float("human_baseline_min", 60.0)
+    ai_time = bounded_float("ai_generation_time_min", 5.0)
+    verify_time = bounded_float("verification_time_min", 8.0)
+    span_recall = bounded_float("exact_span_recall", 0.9, 0.0, 1.0)
+    faithfulness = bounded_float("faithfulness_score", 0.85, 0.0, 1.0)
+    latency = bounded_float("base_latency_overhead_min", 0.5)
+    false_positive_rate = bounded_float("false_positive_rate", 0.05, 0.0, 1.0)
+    resolution_penalty = bounded_float("resolution_penalty_min", 10.0)
+    cra_penalty = bounded_float("cra_session_drop_penalty_min", 1.0)
+
+    skill_adjusted = human_baseline * multipliers[skill]
+    gross_saved = skill_adjusted - (ai_time + verify_time)
+    reliability = (0.60 * span_recall) + (0.40 * faithfulness)
+    guardrail_tax = latency + (false_positive_rate * resolution_penalty) + cra_penalty
+    tvy = (gross_saved * reliability) - guardrail_tax
+    hourly_value = bounded_float("hourly_value_usd", 75.0)
+    value_usd = tvy / 60.0 * hourly_value
+    monthly_runs = int(bounded_float("monthly_runs", 20.0, 0.0))
+    monthly_value_usd = value_usd * monthly_runs
+
+    if tvy >= 30:
+        verdict = "scale"
+        next_action = "Productize this workflow and sell/automate it first."
+    elif tvy > 0:
+        verdict = "optimize"
+        next_action = "Positive ROI; reduce verification or guardrail friction before scaling."
+    else:
+        verdict = "kill"
+        next_action = "Do not scale; the workflow loses time after reliability/friction."
+
+    return {
+        "name": name,
+        "skill_level": skill,
+        "skill_adjusted_human_baseline_min": round(skill_adjusted, 3),
+        "gross_time_saved_min": round(gross_saved, 3),
+        "rag_reliability_coefficient": round(reliability, 4),
+        "guardrail_friction_tax_min": round(guardrail_tax, 3),
+        "true_value_yield_min": round(tvy, 3),
+        "value_usd_per_run": round(value_usd, 2),
+        "monthly_value_usd": round(monthly_value_usd, 2),
+        "is_net_positive": tvy > 0,
+        "verdict": verdict,
+        "next_action": next_action,
+        "source": "APVA formula",
+    }
+
+
+@app.post("/api/productivity/apva")
+async def api_productivity_apva(payload: Dict[str, Any] = Body(default_factory=dict)):
+    try:
+        return _apva_score(payload)
+    except Exception as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+REPO_TARGETS = {
+    "dashboard": Path("/home/scott/ai-workspace/repos/llm-inference-api"),
+    "apva": Path("/home/scott/ai-workspace/repos/apva-framework"),
+}
+VERIFICATION_LOG = DASHBOARD_STATE_DIR / "verification.jsonl"
+
+
+def _run_git(args: List[str], cwd: Path, timeout: int = 5) -> str:
+    result = subprocess.run(["git", *args], cwd=str(cwd), text=True, capture_output=True, timeout=timeout, check=False)
+    return (result.stdout or result.stderr or "").strip()
+
+
+def _repo_status_snapshot() -> Dict[str, Any]:
+    repos: List[Dict[str, Any]] = []
+    for name, path in REPO_TARGETS.items():
+        exists = path.exists()
+        status = _run_git(["status", "--short", "--branch"], path) if exists else "missing"
+        changed = [line for line in status.splitlines() if line and not line.startswith("##")]
+        branch = status.splitlines()[0].replace("## ", "") if status.splitlines() else "unknown"
+        repos.append({
+            "name": name,
+            "path": str(path),
+            "exists": exists,
+            "branch": branch,
+            "dirty_files": len(changed),
+            "changes": changed[:25],
+            "risk": "dirty" if changed else "clean",
+        })
+    return {"repos": repos, "timestamp": _now_ts()}
+
+
+def _verification_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    DASHBOARD_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    safe = {
+        "timestamp": _now_ts(),
+        "repo": str(record.get("repo", "unknown"))[:120],
+        "command": str(record.get("command", ""))[:500],
+        "exit_code": int(record.get("exit_code", 0)),
+        "summary": str(record.get("summary", ""))[:1000],
+        "log_path": str(record.get("log_path", ""))[:500],
+    }
+    with VERIFICATION_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(safe, sort_keys=True) + "\n")
+    return safe
+
+
+def _verification_latest(limit: int = 20) -> Dict[str, Any]:
+    if not VERIFICATION_LOG.exists():
+        return {"records": []}
+    lines = VERIFICATION_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-max(1, min(limit, 100)):]
+    records = []
+    for line in lines:
+        try:
+            records.append(json.loads(line))
+        except Exception:
+            continue
+    return {"records": records}
+
+
+def _operator_next_action() -> Dict[str, Any]:
+    repo_snapshot = _repo_status_snapshot()
+    dirty = [r for r in repo_snapshot["repos"] if r.get("dirty_files", 0) > 0]
+    if dirty:
+        first = dirty[0]
+        return {
+            "top_action": f"Stabilize and commit {first['name']} repo changes",
+            "why": "Dirty repos are the highest immediate operator risk; they hide partial fixes and block safe iteration.",
+            "expected_value": "Prevents lost work and makes future automation/productization safe.",
+            "risk": "medium",
+            "command": f"cd {first['path']} && git diff --stat && git diff",
+            "verify": "run repo verify script, then git status --short --branch",
+            "ignore": ["new model installs", "visual polish before live smoke", "deleting model stores before hash inventory"],
+            "repos": repo_snapshot["repos"],
+        }
+    return {
+        "top_action": "Run revenue experiment for Local AI Lab Command Center",
+        "why": "Core lab services are healthy and repos are clean; next leverage is external validation.",
+        "expected_value": "$297-$499 first-dollar productized audit/setup offer.",
+        "risk": "low",
+        "command": "open /home/scott/ai-lab/productization/local-ai-command-center/offer.md",
+        "verify": "one buyer conversation or landing-page response this week",
+        "ignore": ["new infrastructure", "non-revenue features"],
+        "repos": repo_snapshot["repos"],
+    }
+
+
+@app.get("/api/operator/repos")
+async def api_operator_repos():
+    return await asyncio.to_thread(_repo_status_snapshot)
+
+
+@app.get("/api/operator/next-action")
+async def api_operator_next_action():
+    return await asyncio.to_thread(_operator_next_action)
+
+
+@app.get("/api/verification/latest")
+async def api_verification_latest(limit: int = 20):
+    return await asyncio.to_thread(_verification_latest, limit)
+
+
+@app.post("/api/verification/record")
+async def api_verification_record(record: Dict[str, Any] = Body(default_factory=dict)):
+    return await asyncio.to_thread(_verification_record, record)
+
+
+@app.get("/api/workforce/status")
+async def api_workforce_status():
+    """Status of all autonomous agents."""
+    agents = ["sales", "ops", "dev"]
+    status = {}
+    logs_dir = Path("/home/scott/ai-lab/autonomous/logs")
+    for agent in agents:
+        latest = list(logs_dir.glob(f"*{agent}*.log"))
+        status[agent] = {
+            "running": False,
+            "last_run": str(max(latest).stat().st_mtime) if latest else "never",
+        }
+    return {"agents": status}
+
+
+@app.get("/api/workforce/reports")
+async def api_workforce_reports(period: str = "daily"):
+    """Generate workforce report."""
+    report_script = "/home/scott/ai-lab/autonomous/reports/report-generators.py"
+    if Path(report_script).exists():
+        result = subprocess.run(
+            ["python3", report_script, period],
+            capture_output=True, text=True, timeout=30
+        )
+        return {"report": result.stdout, "period": period}
+    return {"error": "Report generator not found"}
+
+
 @app.get("/api/workflows/productize/{slug}")
 async def api_workflows_productize_slug(slug: str):
     inv = _workflow_productize_inventory()
@@ -2910,11 +3119,11 @@ async def epic_ws(websocket: WebSocket):
 async def _send_state_sync(websocket, ws_id: str):
     """Send full current state to a newly connected/reconnecting client."""
     try:
-        snap = await asyncio.to_thread(_system_snapshot_cached)
-        rev = await asyncio.to_thread(_revenue_dashboard_cached)
-        pred = await asyncio.to_thread(_predictive_monitoring_cached)
-        imp = await asyncio.to_thread(_self_improvement_suggestions_cached)
-        packs = await asyncio.to_thread(_workflow_productize_inventory_cached)
+        snap = await asyncio.to_thread(_system_snapshot)
+        rev = await asyncio.to_thread(_revenue_dashboard)
+        pred = await asyncio.to_thread(_predictive_monitoring)
+        imp = await asyncio.to_thread(_self_improvement_suggestions)
+        packs = await asyncio.to_thread(_workflow_productize_inventory)
         
         global _EPIC_EVENT_SEQ
         _EPIC_EVENT_SEQ += 1
@@ -3004,9 +3213,9 @@ async def _epic_push_loop():
     
     while True:
         try:
-            snap = await asyncio.to_thread(_system_snapshot_cached)
-            rev = await asyncio.to_thread(_revenue_dashboard_cached)
-            pred = await asyncio.to_thread(_predictive_monitoring_cached)
+            snap = await asyncio.to_thread(_system_snapshot)
+            rev = await asyncio.to_thread(_revenue_dashboard)
+            pred = await asyncio.to_thread(_predictive_monitoring)
             
             # --- Tick event (always broadcast) ---
             await _epic_broadcast("tick", {

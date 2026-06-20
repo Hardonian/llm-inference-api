@@ -267,6 +267,36 @@
           </div>
         </section>
 
+        <!-- APVA Productivity ROI Calculator -->
+        <section class="panel epic-panel" id="operator-panel">
+          <div class="panel-header">
+            <h2>🎯 Next Best Action</h2>
+            <button class="btn small" id="operator-refresh">Refresh</button>
+          </div>
+          <div id="operator-result" class="log-output" style="max-height:220px;overflow:auto">Loading operator queue...</div>
+        </section>
+
+        <!-- APVA Productivity ROI Calculator -->
+        <section class="panel epic-panel" id="apva-panel">
+          <div class="panel-header">
+            <h2>⏱ APVA Productivity ROI</h2>
+            <span class="badge">True Value Yield</span>
+          </div>
+          <div class="epic-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px">
+            <label class="field"><span>Workflow</span><input class="input" id="apva-name" value="AI lab client audit" /></label>
+            <label class="field"><span>Human min</span><input class="input" id="apva-human" type="number" value="90" min="0" step="1" /></label>
+            <label class="field"><span>AI min</span><input class="input" id="apva-ai" type="number" value="12" min="0" step="1" /></label>
+            <label class="field"><span>Verify min</span><input class="input" id="apva-verify" type="number" value="15" min="0" step="1" /></label>
+            <label class="field"><span>Skill</span><select class="select" id="apva-skill"><option value="junior">junior</option><option value="mid" selected>mid</option><option value="senior">senior</option></select></label>
+            <label class="field"><span>Monthly runs</span><input class="input" id="apva-runs" type="number" value="20" min="0" step="1" /></label>
+          </div>
+          <div class="epic-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn primary" id="apva-run">Calculate TVY</button>
+            <button class="btn" id="apva-load-demo">Load Productized-Service Demo</button>
+          </div>
+          <div id="apva-result" class="log-output" style="max-height:220px;overflow:auto;margin-top:12px">Estimate whether a workflow is worth automating or selling.</div>
+        </section>
+
         <!-- Epic Command Center HUD -->
         <section class="panel epic-panel">
           <div class="panel-header">
@@ -462,6 +492,8 @@
   </div>
 
   <script src="/static/js/epic.js"></script>
+  <script src="/static/js/operator.js"></script>
+  <script src="/static/js/apva.js"></script>
   <script type="module" src="/static/js/dashboard.js"></script>
 </body>
 </html>

@@ -54,6 +54,10 @@ PUBLIC_PATHS = {
     "/api/trends", "/api/insights", "/api/p50",
     "/ws/epic",
     "/api/users/me", "/api/users",
+    "/api/operator/repos", "/api/operator/next-action",  # Workforce automation
+    "/api/workforce/status", "/api/workforce/reports",  # Workforce endpoints
+    "/api/productivity/apva",  # APVA scoring for workforce
+    "/api/verification/latest",  # Verification ledger (read)
     # Sensitive (money / predictions / trends / exports / agent) require Bearer token
 }
 

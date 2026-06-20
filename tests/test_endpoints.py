@@ -193,3 +193,52 @@ def test_create_token_with_auth(client, auth_header):
     data = r.json()
     assert data.get("token", "").startswith("dash_")
     assert data.get("user_id") == "test-user"
+
+
+# ============================================================
+# PRODUCTIVITY / OPERATOR endpoints
+# ============================================================
+
+def test_apva_productivity_locked(client):
+    r = client.post("/api/productivity/apva", json={"name": "smoke"})
+    assert r.status_code == 401
+
+
+def test_apva_productivity_with_auth(client, auth_header):
+    r = client.post(
+        "/api/productivity/apva",
+        headers=auth_header,
+        json={
+            "name": "smoke",
+            "human_baseline_min": 60,
+            "ai_generation_time_min": 5,
+            "verification_time_min": 8,
+            "exact_span_recall": 0.9,
+            "faithfulness_score": 0.85,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "APVA formula"
+    assert data["true_value_yield_min"] > 0
+    assert data["verdict"] in {"scale", "optimize", "kill"}
+
+
+def test_operator_next_action_with_auth(client, auth_header):
+    r = client.get("/api/operator/next-action", headers=auth_header)
+    assert r.status_code == 200
+    data = r.json()
+    assert "top_action" in data
+    assert "repos" in data
+
+
+def test_verification_record_and_latest_with_auth(client, auth_header):
+    r = client.post(
+        "/api/verification/record",
+        headers=auth_header,
+        json={"repo": "test", "command": "pytest", "exit_code": 0, "summary": "ok"},
+    )
+    assert r.status_code == 200
+    latest = client.get("/api/verification/latest", headers=auth_header)
+    assert latest.status_code == 200
+    assert "records" in latest.json()
