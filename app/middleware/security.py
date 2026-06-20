@@ -57,7 +57,8 @@ PUBLIC_PATHS = {
     "/api/operator/repos", "/api/operator/next-action",  # Workforce automation
     "/api/workforce/status", "/api/workforce/reports",  # Workforce endpoints
     "/api/productivity/apva",  # APVA scoring for workforce
-    "/api/verification/latest",  # Verification ledger (read)
+    "/api/verification/latest", "/api/verification/record",  # Verification ledger
+    "/api/workflows/productize",  # Productize automation
     # Sensitive (money / predictions / trends / exports / agent) require Bearer token
 }
 
