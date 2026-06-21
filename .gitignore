@@ -11,3 +11,5 @@ node_modules/
 app/__pycache__/
 app/**/__pycache__/
 .hermes-backups/
+llm_inference_api.egg-info/
+uv.lock
