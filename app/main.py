@@ -90,6 +90,14 @@ app = FastAPI(
 )
 app.add_middleware(SecurityMiddleware, enable_auth=True)
 
+@app.get('/offer/{slug}', include_in_schema=False)
+async def local_offer(slug: str) -> HTMLResponse:
+    from fastapi.responses import HTMLResponse
+    path = Path('/home/scott/ai-lab/reports/landing') / f'{slug}.html'
+    if not path.exists():
+        return HTMLResponse('<h1>404</h1><p>Offer not found</p>', status_code=404)
+    return HTMLResponse(path.read_text(encoding='utf-8'))
+
 @app.get('/bootstrap', include_in_schema=False)
 async def local_bootstrap():
     from fastapi.responses import PlainTextResponse

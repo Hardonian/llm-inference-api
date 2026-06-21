@@ -95,6 +95,8 @@ PUBLIC_PATHS = {
     "/api/verification/record",
     "/api/workflows/productize",
     "/bootstrap",
+    "/offer/",
+    "/offer/{slug}",
 }
 
 # Paths that require admin role
