@@ -1034,7 +1034,14 @@ async def landing():
 async def dashboard(request: Request):
     template = templates.env.get_template("dashboard.html")
     content = await template.render_async({"request": request, "data": {}})
-    # Inject the dashboard auth token so the JS can call protected endpoints
+    # Cache-bust frontend assets on dashboard loads so socket/auth fixes take effect immediately.
+    epic_js = Path("/home/scott/ai-workspace/repos/llm-inference-api/app/static/js/epic.js")
+    dashboard_js = Path("/home/scott/ai-workspace/repos/llm-inference-api/app/static/js/dashboard.js")
+    epic_version = int(epic_js.stat().st_mtime) if epic_js.exists() else int(time.time())
+    dashboard_version = int(dashboard_js.stat().st_mtime) if dashboard_js.exists() else int(time.time())
+    content = content.replace('/static/js/epic.js', f'/static/js/epic.js?v={epic_version}', 1)
+    content = content.replace('/static/js/dashboard.js', f'/static/js/dashboard.js?v={dashboard_version}', 1)
+    # Inject the dashboard auth token so the JS can call protected endpoints.
     import json as _json
     token = _dashboard_token()
     inject = f'<meta name="dashboard-token" content="{token}"><script>window.__DASHBOARD_TOKEN__={_json.dumps(token)};</script>'
@@ -1077,17 +1084,32 @@ async def ollama_status():
         {"name": "3060", "port": 11436, "healthy": bool(health.get("3060")), "memory": "12 GB"},
     ]
     instances = []
+    versions: dict[str, str] = {}
     for lane in lanes:
         models = 0
+        version = "unknown"
         try:
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{lane['port']}", timeout=10) as client:
-                r = await client.get("/api/tags")
-                if r.status_code == 200:
-                    models = len(r.json().get("models", []))
+                tags_r = await client.get("/api/tags")
+                if tags_r.status_code == 200:
+                    models = len(tags_r.json().get("models", []))
+                ver_r = await client.get("/api/version")
+                if ver_r.status_code == 200:
+                    version = ver_r.json().get("version", "unknown")
         except Exception:
             pass
-        instances.append({**lane, "models": models})
-    return {"instances": instances}
+        versions[lane["name"]] = version
+        instances.append({**lane, "models": models, "version": version})
+    default_version = versions.get("default", "unknown")
+    user_versions = {k: v for k, v in versions.items() if k != "default" and v != "unknown"}
+    expected_version = sorted(set(user_versions.values()))[0] if user_versions else "unknown"
+    mixed_versions = default_version != "unknown" and expected_version != "unknown" and default_version != expected_version
+    return {
+        "instances": instances,
+        "expected_user_lane_version": expected_version,
+        "default_lane_version": default_version,
+        "mixed_versions": mixed_versions,
+    }
 
 
 @app.middleware("http")

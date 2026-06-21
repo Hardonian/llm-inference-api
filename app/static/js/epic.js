@@ -47,20 +47,53 @@ const EpicCommandCenter = {
     setInterval(() => { if (!this.ws || this.ws.readyState !== 1) this.refreshHUD(); }, 30000);
   },
   
-  // R8: WebSocket consumer with auto-reconnect + backoff
+  // R8: WebSocket consumer with auth + auto-reconnect + backoff
   connectWS() {
     try {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      this.ws = new WebSocket(`${proto}//${location.host}/ws/epic`);
+      const token = window.__DASHBOARD_TOKEN__ || document.querySelector('meta[name="dashboard-token"]')?.content;
+      const url = new URL(`${proto}//${location.host}/ws/epic`);
+      if (token) url.searchParams.set('token', token);
+      this.ws = new WebSocket(url.toString());
       this.ws.onopen = () => {
         this.wsReconnectDelay = 1000;
         console.log('[Epic WS] connected');
+        try {
+          this.ws.send(JSON.stringify({
+            type: 'hello',
+            subscribe: ['revenue_change', 'disk_alert', 'service_down', 'prediction_update', 'agent_complete'],
+            last_seq: 0,
+          }));
+        } catch (e) {
+          console.warn('[Epic WS] hello failed', e);
+        }
       };
       this.ws.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data);
+          if (data.type === 'state_sync' && data.payload) {
+            this.hudData = {
+              ...this.hudData,
+              revenue: data.payload.revenue,
+              predictions: data.payload.predictions?.predictions || data.payload.predictions || [],
+              improvements: data.payload.improvements,
+              workflow_packs: data.payload.workflows,
+              health: data.payload.system,
+              services_ok: Array.isArray(data.payload.system?.services)
+                ? data.payload.system.services.filter(s => s.ok).length
+                : (data.payload.system?.services_ok ?? this.hudData.services_ok),
+            };
+            this.updateHUDFromData();
+            return;
+          }
           if (data.type === 'tick') {
             this.hudData = { ...this.hudData, ...data };
+            this.updateHUDFromData();
+            return;
+          }
+          if (data.type === 'heartbeat' || data.type === 'pong') return;
+          if (data.payload) {
+            this.hudData = { ...this.hudData, last_event: data };
             this.updateHUDFromData();
           }
         } catch (e) { /* ignore parse errors */ }

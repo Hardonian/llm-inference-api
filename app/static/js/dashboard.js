@@ -371,6 +371,8 @@ function createGPUCard(gpu, index) {
 function createLaneCard(lane) {
   const isHealthy = lane.healthy;
   const nameUpper = lane.name.toUpperCase();
+  const version = lane.version || 'unknown';
+  const versionWarning = lane.mixedVersion ? `<div class="lane-warning">Version mismatch: ${escapeHtml(version)} vs expected ${escapeHtml(lane.expectedVersion || 'unknown')}</div>` : '';
 
   return `
     <div class="lane-card clickable" data-lane="${lane.name}">
@@ -384,11 +386,13 @@ function createLaneCard(lane) {
       <div class="lane-info">
         <div class="lane-info-item"><span class="lane-info-label">Port</span><span class="lane-info-value">${lane.port}</span></div>
         <div class="lane-info-item"><span class="lane-info-label">Memory</span><span class="lane-info-value">${lane.memory}</span></div>
+        <div class="lane-info-item"><span class="lane-info-label">Version</span><span class="lane-info-value">${version}</span></div>
       </div>
       <div class="lane-models">
         <span class="lane-models-label">Models</span>
         <span class="lane-models-count">${lane.models || 0}</span>
       </div>
+      ${versionWarning}
       <div class="lane-actions">
         <button class="btn small" onclick="event.stopPropagation(); LaneManager.open('${lane.name}', ${lane.port})">Manage</button>
         <button class="btn small" onclick="event.stopPropagation(); LaneManager.pullModel('${lane.name}', ${lane.port})">Pull</button>
@@ -1491,8 +1495,15 @@ async function fetchGPUStatus() {
 async function fetchOllamaStatus() {
   try {
     const data = await API.ollamaStatus();
-    state.ollamaLanes = data.instances || [];
+    state.ollamaLanes = (data.instances || []).map(lane => ({
+      ...lane,
+      expectedVersion: data.expected_user_lane_version || 'unknown',
+      mixedVersion: Boolean(data.mixed_versions && lane.name === 'default'),
+    }));
     renderLaneGrid();
+    if (data.mixed_versions) {
+      logActivity(`Ollama default lane version mismatch: ${data.default_lane_version} vs expected ${data.expected_user_lane_version}`, 'warn');
+    }
   } catch (e) { console.error('Ollama status failed:', e); }
 }
 
