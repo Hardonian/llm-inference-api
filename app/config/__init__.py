@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     @property
     def ollama_instances(self) -> Dict[str, OllamaInstanceConfig]:
         return {
+            "default": OllamaInstanceConfig(host="localhost", port=11434, gpu_type="v100"),
             "v100": OllamaInstanceConfig(host="localhost", port=11437, gpu_type="v100"),
             "p40": OllamaInstanceConfig(host="localhost", port=11435, gpu_type="p40"),
             "3060": OllamaInstanceConfig(host="localhost", port=11436, gpu_type="3060"),
