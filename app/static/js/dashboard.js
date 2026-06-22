@@ -253,6 +253,10 @@ const API = {
   health() { return this.request('/health'); },
   gpuStatus() { return this.request('/gpu-status'); },
   ollamaStatus() { return this.request('/ollama-status'); },
+  ollamaRoute(task = 'interactive_chat', model = '') {
+    const qs = new URLSearchParams({ task, ...(model ? { model } : {}) });
+    return this.request(`/api/ollama/route?${qs.toString()}`);
+  },
   report() { return this.request('/api/report'); },
   heal() { return this.request('/api/heal', { method: 'POST' }); },
   jobs() { return this.request('/api/jobs'); },
@@ -373,6 +377,11 @@ function createLaneCard(lane) {
   const nameUpper = lane.name.toUpperCase();
   const version = lane.version || 'unknown';
   const versionWarning = lane.mixedVersion ? `<div class="lane-warning">Version mismatch: ${escapeHtml(version)} vs expected ${escapeHtml(lane.expectedVersion || 'unknown')}</div>` : '';
+  const preferenceBadges = Array.isArray(lane.preferred_for) && lane.preferred_for.length
+    ? `<div class="lane-models"><span class="lane-models-label">Best for</span><span class="lane-models-count">${lane.preferred_for.map(x => escapeHtml(x.replace(/_/g, ' '))).join(', ')}</span></div>`
+    : '';
+  const routeReason = lane.route_reason ? `<div class="lane-warning">${escapeHtml(lane.route_reason)}</div>` : '';
+  const pressureWarning = lane.pressure_warning ? `<div class="lane-warning">${escapeHtml(lane.pressure_warning)}</div>` : '';
 
   return `
     <div class="lane-card clickable" data-lane="${lane.name}">
@@ -392,7 +401,10 @@ function createLaneCard(lane) {
         <span class="lane-models-label">Models</span>
         <span class="lane-models-count">${lane.models || 0}</span>
       </div>
+      ${preferenceBadges}
       ${versionWarning}
+      ${routeReason}
+      ${pressureWarning}
       <div class="lane-actions">
         <button class="btn small" onclick="event.stopPropagation(); LaneManager.open('${lane.name}', ${lane.port})">Manage</button>
         <button class="btn small" onclick="event.stopPropagation(); LaneManager.pullModel('${lane.name}', ${lane.port})">Pull</button>
@@ -1495,6 +1507,7 @@ async function fetchGPUStatus() {
 async function fetchOllamaStatus() {
   try {
     const data = await API.ollamaStatus();
+    state.ollamaRouting = data.routing || {};
     state.ollamaLanes = (data.instances || []).map(lane => ({
       ...lane,
       expectedVersion: data.expected_user_lane_version || 'unknown',
@@ -1503,6 +1516,14 @@ async function fetchOllamaStatus() {
     renderLaneGrid();
     if (data.mixed_versions) {
       logActivity(`Ollama default lane version mismatch: ${data.default_lane_version} vs expected ${data.expected_user_lane_version}`, 'warn');
+    }
+    if (state.ollamaRouting?.desktop?.active) {
+      const displayGpu = (state.ollamaRouting.desktop.display_gpu_indexes || []).join(', ') || 'unknown';
+      const profileKey = `${state.ollamaRouting.desktop.profile || 'unknown'}:${displayGpu}`;
+      if (state.lastDesktopProfileLogged !== profileKey) {
+        state.lastDesktopProfileLogged = profileKey;
+        logActivity(`Desktop-aware routing active: display GPU ${displayGpu}`, 'system');
+      }
     }
   } catch (e) { console.error('Ollama status failed:', e); }
 }
@@ -1797,7 +1818,8 @@ async function improvePrompt() {
       document.getElementById('prompt-input').value = data.improved_prompt;
       awardXP(10, 'Prompt improved');
       unlockBadge('prompt-engineer');
-      UI.toast('Improved', 'Check updated prompt', 'success');
+      const routeMsg = data.route?.lane ? ` via ${data.route.lane.toUpperCase()}` : '';
+      UI.toast('Improved', `Check updated prompt${routeMsg}`, 'success');
     }
   } catch (e) { UI.toast('Error', 'Improve failed', 'error'); }
   finally { UI.setLoading(btn, false); }

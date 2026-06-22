@@ -122,6 +122,9 @@ COMFYUI_INPUT_DIR = COMFYUI_ROOT / "input"
 COMFYUI_MODELS_DIR = COMFYUI_ROOT / "models"
 COMFYUI_OUTPUT_DIR = COMFYUI_ROOT / "output"
 DASHBOARD_STATE_DIR = Path("/home/scott/ai-lab/dashboard")
+ROUTE_HELPER = Path("/home/scott/ai-lab/scripts/bin/ai-stack-route.sh")
+ROUTE_CACHE_TTL = 15.0
+_ROUTE_CACHE: Dict[str, Any] = {"loaded_at": 0.0, "payload": None}
 
 # Disk rescue cache: 30-min TTL is plenty because disk state changes slowly.
 _DISK_RESCUE_TTL = 1800
@@ -146,6 +149,73 @@ def _default_money_paths() -> List[Dict[str, Any]]:
 
 def _money_snapshot() -> Dict[str, Any]:
     return {"updated_at": _now_ts(), "paths": _default_money_paths()}
+
+
+def _route_snapshot(force: bool = False) -> Dict[str, Any]:
+    now = time.time()
+    cached = _ROUTE_CACHE.get("payload")
+    if not force and cached and (now - float(_ROUTE_CACHE.get("loaded_at") or 0)) < ROUTE_CACHE_TTL:
+        return cached
+    payload: Dict[str, Any] = {
+        "desktop": {"active": False, "profile": "unknown", "display_gpu_indexes": []},
+        "lane_health": {},
+        "recommendations": {},
+        "error": "route helper unavailable",
+    }
+    try:
+        if ROUTE_HELPER.exists():
+            proc = subprocess.run([str(ROUTE_HELPER), 'json'], capture_output=True, text=True, timeout=12)
+            if proc.returncode == 0 and proc.stdout.strip():
+                payload = json.loads(proc.stdout)
+            else:
+                payload["error"] = (proc.stderr or proc.stdout or f'route helper exited {proc.returncode}').strip()[:400]
+        else:
+            payload["error"] = f'missing route helper: {ROUTE_HELPER}'
+    except Exception as exc:
+        payload["error"] = str(exc)
+    _ROUTE_CACHE["loaded_at"] = now
+    _ROUTE_CACHE["payload"] = payload
+    return payload
+
+
+def _route_recommendations(task: str) -> List[Dict[str, Any]]:
+    payload = _route_snapshot()
+    recs = payload.get("recommendations", {}).get(task, [])
+    return recs if isinstance(recs, list) else []
+
+
+def _route_lane_name_for_client(client: Any) -> Optional[str]:
+    for lane_name, lane_client in ollama_manager.clients.items():
+        if lane_client is client:
+            return lane_name
+    return None
+
+
+async def _choose_ollama_target(model: str, task: str = 'interactive_chat') -> tuple[Optional[str], Optional[Any], Optional[Dict[str, Any]]]:
+    health = await ollama_manager.health_check_all()
+    for rec in _route_recommendations(task):
+        lane_name = rec.get('lane')
+        if not lane_name or lane_name not in ollama_manager.clients:
+            continue
+        if not health.get(lane_name):
+            continue
+        client = ollama_manager.clients[lane_name]
+        try:
+            if await client.has_model(model):
+                return lane_name, client, rec
+        except Exception:
+            continue
+    fallback = await ollama_manager.find_instance_for_model(model)
+    if fallback is not None:
+        return _route_lane_name_for_client(fallback), fallback, None
+    return None, None, None
+
+
+def _route_lane_pressure(lane_name: str, task: str = 'interactive_chat') -> Optional[str]:
+    desktop = _route_snapshot().get('desktop', {})
+    if lane_name == '3060' and desktop.get('active') and task not in {'vision', 'tensorrt', 'comfyui'}:
+        return 'Display GPU is active; keep RTX 3060 as lower priority for general inference.'
+    return None
 
 
 # ============================================================
@@ -545,6 +615,7 @@ def _system_snapshot() -> Dict[str, Any]:
         "load": _load_summary(),
         "disk": _disk_summary(),
         "comfy_output_gb": _comfy_output_size_gb(),
+        "routing": _route_snapshot(),
         "services": [
             _self_alive(),
             _system_service_check("comfyui", "http://127.0.0.1:8188/system_stats"),
@@ -992,8 +1063,9 @@ async def _run_mcp_agent(agent: Dict[str, Any], prompt: str, model: Optional[str
             "response": "Local workflow optimizer: keep dashboard actions wired to /api/comfy/workflows, /api/tools/custom, /api/mcp/run, and /api/views. Prefer local-only execution and verify with /health and /api/comfy/queue before claiming success.",
         }
     if kind == "ollama":
-        endpoint = agent.get("endpoint", "http://localhost:11435").rstrip("/")
         model_name = model or agent.get("model") or "llama3.1:8b"
+        lane_name, routed_client, rec = await _choose_ollama_target(model_name, task='interactive_chat')
+        endpoint = (routed_client.base_url if routed_client else agent.get("endpoint", "http://localhost:11435")).rstrip("/")
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(f"{endpoint}/api/generate", json={
                 "model": model_name,
@@ -1002,7 +1074,10 @@ async def _run_mcp_agent(agent: Dict[str, Any], prompt: str, model: Optional[str
                 "options": {"num_predict": 700},
             })
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            if isinstance(data, dict):
+                data.setdefault('routing', {'lane': lane_name, 'endpoint': endpoint, 'reason': (rec or {}).get('why')})
+            return data
     raise HTTPException(status_code=400, detail=f"Unsupported agent kind: {kind}")
 
 app.mount(
@@ -1074,15 +1149,61 @@ async def gpu_status():
     return {"driver": "580.159.03", "gpus": gpus}
 
 
+@app.get("/api/ollama/route")
+async def api_ollama_route(task: str = 'interactive_chat', model: Optional[str] = None):
+    payload = _route_snapshot(force=True)
+    recommendations = _route_recommendations(task)
+    selected_lane = None
+    selected_port = None
+    selected_reason = None
+    if model:
+        lane_name, client, rec = await _choose_ollama_target(model, task=task)
+        if lane_name:
+            selected_lane = lane_name
+            try:
+                selected_port = getattr(getattr(client, 'config', None), 'port', None)
+            except Exception:
+                selected_port = None
+            selected_reason = (rec or {}).get('why') or _route_lane_pressure(lane_name, task)
+    elif recommendations:
+        selected_lane = recommendations[0].get('lane')
+        selected_port = recommendations[0].get('port')
+        selected_reason = recommendations[0].get('why')
+    return {
+        'task': task,
+        'requested_model': model,
+        'desktop': payload.get('desktop', {}),
+        'selected_lane': selected_lane,
+        'selected_port': selected_port,
+        'selected_reason': selected_reason,
+        'pressure_warning': _route_lane_pressure(selected_lane, task) if selected_lane else None,
+        'recommendations': recommendations,
+    }
+
+
 @app.get("/ollama-status")
 async def ollama_status():
     health = await ollama_manager.health_check_all()
+    route_payload = _route_snapshot(force=True)
+    route_recommendations = route_payload.get('recommendations', {})
+    route_desktop = route_payload.get('desktop', {})
     lanes = [
         {"name": "default", "port": 11434, "healthy": bool(health.get("default")), "memory": "16 GB"},
         {"name": "v100", "port": 11437, "healthy": bool(health.get("v100")), "memory": "16 GB"},
         {"name": "p40", "port": 11435, "healthy": bool(health.get("p40")), "memory": "24 GB"},
         {"name": "3060", "port": 11436, "healthy": bool(health.get("3060")), "memory": "12 GB"},
     ]
+    preferred_map: Dict[str, List[str]] = {lane['name']: [] for lane in lanes}
+    preferred_reason: Dict[str, str] = {}
+    for task_name, recs in route_recommendations.items():
+        if not isinstance(recs, list) or not recs:
+            continue
+        top = recs[0]
+        lane_name = top.get('lane')
+        if lane_name in preferred_map:
+            preferred_map[lane_name].append(task_name)
+            if top.get('why') and lane_name not in preferred_reason:
+                preferred_reason[lane_name] = top.get('why')
     instances = []
     versions: dict[str, str] = {}
     for lane in lanes:
@@ -1098,8 +1219,16 @@ async def ollama_status():
                     version = ver_r.json().get("version", "unknown")
         except Exception:
             pass
-        versions[lane["name"]] = version
-        instances.append({**lane, "models": models, "version": version})
+        versions[lane['name']] = version
+        instances.append({
+            **lane,
+            "models": models,
+            "version": version,
+            "preferred_for": preferred_map.get(lane['name'], []),
+            "route_reason": preferred_reason.get(lane['name']),
+            "pressure_warning": _route_lane_pressure(lane['name']),
+            "desktop_active": bool(route_desktop.get('active')),
+        })
     default_version = versions.get("default", "unknown")
     user_versions = {k: v for k, v in versions.items() if k != "default" and v != "unknown"}
     expected_version = sorted(set(user_versions.values()))[0] if user_versions else "unknown"
@@ -1109,6 +1238,9 @@ async def ollama_status():
         "expected_user_lane_version": expected_version,
         "default_lane_version": default_version,
         "mixed_versions": mixed_versions,
+        "desktop_profile": route_desktop.get('profile', 'unknown'),
+        "display_gpu_indexes": route_desktop.get('display_gpu_indexes', []),
+        "routing": route_payload,
     }
 
 
@@ -1585,9 +1717,11 @@ async def improve_prompt(request: ImprovePromptRequest):
 
         system = system_prompts.get(mode, system_prompts["cinematic"])
 
+        lane_name, routed_client, rec = await _choose_ollama_target("hermes3", task='interactive_chat')
+        endpoint = (routed_client.base_url if routed_client else 'http://localhost:11436').rstrip('/')
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
-                "http://localhost:11436/api/chat",
+                f"{endpoint}/api/chat",
                 json={
                     "model": "hermes3",
                     "messages": [
@@ -1602,9 +1736,9 @@ async def improve_prompt(request: ImprovePromptRequest):
             if response.status_code == 200:
                 data = response.json()
                 improved = data.get("message", {}).get("content", "").strip()
-                return {"improved_prompt": improved or prompt}
+                return {"improved_prompt": improved or prompt, "route": {"lane": lane_name, "endpoint": endpoint, "reason": (rec or {}).get('why')}}
             else:
-                return {"improved_prompt": prompt}
+                return {"improved_prompt": prompt, "route": {"lane": lane_name, "endpoint": endpoint}}
     except Exception as e:
         logger.error("improve_prompt_failed", error=str(e))
         return JSONResponse(status_code=500, content={"detail": str(e)})

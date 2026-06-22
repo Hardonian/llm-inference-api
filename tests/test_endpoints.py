@@ -242,3 +242,18 @@ def test_verification_record_and_latest_with_auth(client, auth_header):
     latest = client.get("/api/verification/latest", headers=auth_header)
     assert latest.status_code == 200
     assert "records" in latest.json()
+
+
+def test_ollama_route_public(client):
+    r = client.get('/api/ollama/route?task=interactive_chat')
+    assert r.status_code == 200
+    data = r.json()
+    assert 'recommendations' in data
+
+
+def test_ollama_status_includes_routing(client):
+    r = client.get('/ollama-status')
+    assert r.status_code == 200
+    data = r.json()
+    assert 'routing' in data
+    assert 'instances' in data
