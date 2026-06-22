@@ -1128,7 +1128,7 @@ const MCPAgentPanel = {
           <div>
             <h4>${escapeHtml(agent.name)}</h4>
             <p>${escapeHtml(agent.description || '')}</p>
-            <p class="muted">${escapeHtml(agent.endpoint || agent.kind || 'local')}</p>
+            <p class="muted">${escapeHtml(agent.route_task ? `desktop-aware route: ${agent.route_task}` : (agent.kind || 'local'))}</p>
           </div>
           <span class="badge-inline badge-purple">${escapeHtml(agent.model || 'agent')}</span>
         </div>
@@ -1152,8 +1152,9 @@ const MCPAgentPanel = {
       const data = await API.runMCP(agent.id, prompt, agent.model);
       this.lastRun = data;
       if (result) result.innerHTML = renderJson(data, 'No output');
-      UI.toast('Agent complete', agent.name, 'success');
-      logActivity('MCP agent: ' + agent.name, 'success', 18);
+      const routeLane = data?.response?.routing?.lane ? ` via ${data.response.routing.lane.toUpperCase()}` : '';
+      UI.toast('Agent complete', `${agent.name}${routeLane}`, 'success');
+      logActivity('MCP agent: ' + agent.name + routeLane, 'success', 18);
     } catch (e) {
       if (result) result.innerHTML = `<pre class="json-output">${escapeHtml(e.message)}</pre>`;
       UI.toast('Error', e.message, 'error');

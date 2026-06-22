@@ -878,19 +878,21 @@ def _default_agents() -> List[Dict[str, Any]]:
         },
         {
             "id": "p40-agent",
-            "name": "P40 Agent",
+            "name": "Routed Chat Agent",
             "kind": "ollama",
-            "description": "Ollama agent on the P40 lane (port 11435).",
-            "endpoint": "http://localhost:11435",
+            "description": "Desktop-aware Ollama agent for interactive chat. Chooses the best healthy lane at runtime.",
             "model": "llama3.1:8b",
+            "route_task": "interactive_chat",
+            "fallback_lane": "p40",
         },
         {
             "id": "3060-agent",
-            "name": "3060 Agent",
+            "name": "Routed Code Agent",
             "kind": "ollama",
-            "description": "Ollama agent on the RTX 3060 lane (port 11436).",
-            "endpoint": "http://localhost:11436",
+            "description": "Desktop-aware Ollama coding agent. Uses routing policy first and only falls back when the target model requires it.",
             "model": "qwen2.5-coder:7b",
+            "route_task": "interactive_chat",
+            "fallback_lane": "p40",
         },
     ]
 
@@ -954,12 +956,62 @@ def _write_json_file(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
+def _route_task_for_agent(agent: Dict[str, Any]) -> str:
+    return str(agent.get("route_task") or "interactive_chat")
+
+
+def _ollama_endpoint_from_route(routed_client: Optional[Any], rec: Optional[Dict[str, Any]], fallback_lane: str = 'default') -> Optional[str]:
+    if routed_client is not None:
+        try:
+            return str(routed_client.base_url).rstrip('/')
+        except Exception:
+            pass
+    if rec and rec.get('port'):
+        try:
+            return f"http://127.0.0.1:{int(rec['port'])}"
+        except Exception:
+            pass
+    inst = settings.ollama_instances.get(fallback_lane) or settings.ollama_instances.get('default')
+    if not inst:
+        return None
+    return f"http://{inst.host}:{inst.port}".rstrip('/')
+
+
+def _normalize_agents(agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for agent in agents:
+        item = dict(agent)
+        if item.get('kind') == 'ollama':
+            item.setdefault('route_task', 'interactive_chat')
+            item.setdefault('fallback_lane', 'p40')
+            if item.get('id') == 'p40-agent':
+                item['name'] = 'Routed Chat Agent'
+                item['description'] = 'Desktop-aware Ollama agent for interactive chat. Chooses the best healthy lane at runtime.'
+                item['model'] = item.get('model') or 'llama3.1:8b'
+                item['route_task'] = 'interactive_chat'
+                item['fallback_lane'] = 'p40'
+            elif item.get('id') == '3060-agent':
+                item['name'] = 'Routed Code Agent'
+                item['description'] = 'Desktop-aware Ollama coding agent. Uses routing policy first and only falls back when the target model requires it.'
+                item['model'] = item.get('model') or 'qwen2.5-coder:7b'
+                item['route_task'] = item.get('route_task') or 'interactive_chat'
+                item['fallback_lane'] = item.get('fallback_lane') or 'p40'
+            item.pop('endpoint', None)
+        normalized.append(item)
+    return normalized
+
+
 def _ensure_agent_files() -> None:
     AGENT_ROOT.mkdir(parents=True, exist_ok=True)
     if not TOOLS_FILE.exists():
         _write_json_file(TOOLS_FILE, _default_tools())
     if not MCP_AGENTS_FILE.exists():
         _write_json_file(MCP_AGENTS_FILE, _default_agents())
+    else:
+        current_agents = _read_json_file(MCP_AGENTS_FILE, _default_agents())
+        normalized_agents = _normalize_agents(current_agents)
+        if normalized_agents != current_agents:
+            _write_json_file(MCP_AGENTS_FILE, normalized_agents)
     if not VIEWS_FILE.exists():
         _write_json_file(VIEWS_FILE, _default_views())
     if not MCP_RUNS_FILE.exists():
@@ -1064,8 +1116,12 @@ async def _run_mcp_agent(agent: Dict[str, Any], prompt: str, model: Optional[str
         }
     if kind == "ollama":
         model_name = model or agent.get("model") or "llama3.1:8b"
-        lane_name, routed_client, rec = await _choose_ollama_target(model_name, task='interactive_chat')
-        endpoint = (routed_client.base_url if routed_client else agent.get("endpoint", "http://localhost:11435")).rstrip("/")
+        route_task = _route_task_for_agent(agent)
+        fallback_lane = str(agent.get('fallback_lane') or 'p40')
+        lane_name, routed_client, rec = await _choose_ollama_target(model_name, task=route_task)
+        endpoint = _ollama_endpoint_from_route(routed_client, rec, fallback_lane=fallback_lane)
+        if not endpoint:
+            raise HTTPException(status_code=503, detail='No routed Ollama endpoint available')
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(f"{endpoint}/api/generate", json={
                 "model": model_name,
@@ -1076,7 +1132,7 @@ async def _run_mcp_agent(agent: Dict[str, Any], prompt: str, model: Optional[str
             response.raise_for_status()
             data = response.json()
             if isinstance(data, dict):
-                data.setdefault('routing', {'lane': lane_name, 'endpoint': endpoint, 'reason': (rec or {}).get('why')})
+                data.setdefault('routing', {'lane': lane_name, 'endpoint': endpoint, 'reason': (rec or {}).get('why'), 'task': route_task})
             return data
     raise HTTPException(status_code=400, detail=f"Unsupported agent kind: {kind}")
 
@@ -1718,7 +1774,9 @@ async def improve_prompt(request: ImprovePromptRequest):
         system = system_prompts.get(mode, system_prompts["cinematic"])
 
         lane_name, routed_client, rec = await _choose_ollama_target("hermes3", task='interactive_chat')
-        endpoint = (routed_client.base_url if routed_client else 'http://localhost:11436').rstrip('/')
+        endpoint = _ollama_endpoint_from_route(routed_client, rec, fallback_lane='p40')
+        if not endpoint:
+            raise HTTPException(status_code=503, detail='No routed Ollama endpoint available for prompt improvement')
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
                 f"{endpoint}/api/chat",

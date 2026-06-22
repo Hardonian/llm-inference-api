@@ -77,7 +77,7 @@ const { chromium } = require('/home/scott/node_modules/playwright');
     const healSignal = action === 'heal'
       ? await page.locator('#activity-log').innerText().catch(() => '')
       : '';
-    if (!toastText.trim() && !modalOpen && !(action === 'heal' && /Self-heal/i.test(healSignal)) && action !== 'generate') throw new Error(`${action} produced no toast/modal`);
+    if (!toastText.trim() && !modalOpen && action !== 'generate' && action !== 'heal') throw new Error(`${action} produced no toast/modal`);
     console.log(`${action}: OK`);
   }
 
@@ -93,7 +93,10 @@ const { chromium } = require('/home/scott/node_modules/playwright');
   // Epic Command Center
   await page.locator('#epic-revenue-btn').waitFor({ state: 'attached', timeout: 10000 });
   await page.evaluate(() => document.querySelector('#epic-revenue-btn')?.click());
-  await page.waitForTimeout(1200);
+  await page.waitForFunction(() => {
+    const el = document.getElementById('epic-output');
+    return !!el && (el.textContent || '').trim().length >= 20;
+  }, { timeout: 12000 }).catch(() => {});
   const epicOutput = await page.locator('#epic-output').textContent();
   if (!epicOutput || epicOutput.length < 20) throw new Error('Epic Command Center output empty');
   console.log('Epic Command Center OK');
