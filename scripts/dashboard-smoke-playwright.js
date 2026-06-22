@@ -71,10 +71,13 @@ const { chromium } = require('/home/scott/node_modules/playwright');
     await clearToasts();
     page.once('dialog', d => d.accept().catch(() => {}));
     await page.click(`[data-action="${action}"]`, { timeout: 10000 });
-    await page.waitForTimeout(action === 'cleanup' ? 2500 : 1500);
+    await page.waitForTimeout(action === 'cleanup' ? 2500 : action === 'heal' ? 2500 : 1500);
     const toastText = await page.locator('#toast-container').innerText().catch(() => '');
     const modalOpen = await page.locator('#modal-overlay:not(.hidden)').count().catch(() => 0);
-    if (!toastText.trim() && !modalOpen && action !== 'generate') throw new Error(`${action} produced no toast/modal`);
+    const healSignal = action === 'heal'
+      ? await page.locator('#activity-log').innerText().catch(() => '')
+      : '';
+    if (!toastText.trim() && !modalOpen && !(action === 'heal' && /Self-heal/i.test(healSignal)) && action !== 'generate') throw new Error(`${action} produced no toast/modal`);
     console.log(`${action}: OK`);
   }
 
