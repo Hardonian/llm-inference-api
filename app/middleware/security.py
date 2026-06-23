@@ -98,7 +98,9 @@ PUBLIC_PATHS = {
     "/bootstrap",
     "/offer/",
     "/offer/{slug}",
+    "/offer/{slug}/checkout",
     "/offers",
+    "/stripe/webhook",
 }
 
 # Paths that require admin role

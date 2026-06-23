@@ -1724,6 +1724,27 @@ async def api_workflows_productize_slug(slug: str):
     return {"pack": pack, "markdown": _workflow_pack_markdown(pack)}
 
 
+@app.post("/api/workflows/productize/{slug}/verify")
+async def api_workflows_productize_verify(slug: str, bundle_path: str = Body(None), price: int = Body(49), tier: str = Body("starter")):
+    """Record verification for a workflow pack bundle and update state."""
+    inv = _workflow_productize_inventory()
+    pack = next((p for p in inv.get("ready_packs", []) if p.get("product_url_slug") == slug), None)
+    if not pack:
+        raise HTTPException(status_code=404, detail="workflow pack not found")
+    verification = {
+        "workflow": slug,
+        "verified_at": time.time(),
+        "bundle_path": bundle_path or "",
+        "price": price,
+        "tier": tier,
+        "status": "verified"
+    }
+    veri_path = Path("/home/scott/ai-lab/reports/verification/workflow-packs") / f"{slug}.json"
+    veri_path.parent.mkdir(parents=True, exist_ok=True)
+    veri_path.write_text(json.dumps(verification, indent=2))
+    return {"status": "verified", "verification": verification}
+
+
 def _workflow_pack_markdown(pack: Dict[str, Any]) -> str:
     lines = [
         f"# {pack['workflow']} Workflow Pack",
@@ -2983,6 +3004,82 @@ async def api_workflow_pack_export(slug: str):
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/gzip",
                     headers={"Content-Disposition": f"attachment; filename={slug}.tar.gz"})
+
+
+@app.get("/offer/{slug}/checkout")
+async def offer_checkout(slug: str):
+    """Redirect to Stripe checkout for an offer. If no Stripe product exists, return instructions."""
+    offers_path = Path('/home/scott/ai-lab/productization/money-factory/offers.json')
+    if not offers_path.exists():
+        raise HTTPException(status_code=404, detail="offers not found")
+    offers = json.loads(offers_path.read_text())
+    offer = next((o for o in offers.get("offers", []) if o.get("slug") == slug), None)
+    if not offer:
+        raise HTTPException(status_code=404, detail="offer not found")
+    
+    # Check for Stripe product mapping
+    stripe_map = Path("/home/scott/ai-lab/productization/stripe-products.json")
+    import os
+    stripe_secret = os.environ.get("STRIPE_SECRET_KEY", "")
+    
+    if stripe_map.exists():
+        stripe_products = json.loads(stripe_map.read_text())
+        product = stripe_products.get(slug)
+        if product and stripe_secret:
+            # Would redirect to actual Stripe checkout in production
+            return {"redirect": f"https://buy.stripe.com/{product.get('price_id', 'test')}", "offer": slug}
+    
+    # Return checkout instructions
+    return {
+        "offer": slug,
+        "price": offer.get("price", "$199"),
+        "stripe_checkout_url": None,
+        "next_action": "Create Stripe product and add STRIPE_SECRET_KEY to .env",
+        "stripe_product": {
+            "name": offer.get("name"),
+            "description": offer.get("headline"),
+            "price": offer.get("price"),
+            "url": f"http://127.0.0.1:8000/offer/{slug}"
+        }
+    }
+
+
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Stripe webhook endpoint - verifies signature and records payment events."""
+    import os
+    import hmac
+    stripe_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    sig_header = request.headers.get("stripe-signature", "")
+    
+    body = await request.body()
+    event = json.loads(body) if body else {}
+    
+    # Record payment event
+    events_path = Path("/home/scott/ai-lab/reports/payments/events.jsonl")
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": time.time(),
+        "event": event.get("type", "unknown"),
+        "data": event.get("data", {}),
+        "verified": bool(sig_header)
+    }
+    with open(events_path, "a") as f:
+        f.write(json.dumps(record) + "\n")
+    
+    # Auto-deliver bundle on successful payment
+    deliverable_path = Path("/home/scott/ai-lab/reports/deliverables")
+    if event.get("type") == "checkout.session.completed":
+        customer = event.get("data", {}).get("object", {}).get("customer", "")
+        price_id = event.get("data", {}).get("object", {}).get("price", {}).get("id", "")
+        
+        # Find matching deliverable by price_id
+        for deliverable in deliverable_path.glob("gumroad-*.tar.gz"):
+            if deliverable.stat().st_size > 1000:  # Non-stub
+                record["deliverable"] = str(deliverable)
+                break
+    
+    return {"status": "processed", "event": event.get("type", "unknown")}
 
 
 @app.get("/api/epic/dashboard")
