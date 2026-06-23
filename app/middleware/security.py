@@ -98,6 +98,7 @@ PUBLIC_PATHS = {
     "/bootstrap",
     "/offer/",
     "/offer/{slug}",
+    "/offers",
 }
 
 # Paths that require admin role

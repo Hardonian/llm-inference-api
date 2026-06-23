@@ -106,6 +106,19 @@ async def local_bootstrap():
     if not path.exists():
         return PlainTextResponse('not found', status_code=404)
     return PlainTextResponse(path.read_text(encoding='utf-8'), media_type='text/plain')
+
+@app.get('/offers', include_in_schema=False)
+async def list_offers():
+    """Public endpoint returning all offers as JSON for landing page consumption."""
+    offers_path = Path('/home/scott/ai-lab/productization/money-factory/offers.json')
+    if not offers_path.exists():
+        return {"offers": []}
+    offers = json.loads(offers_path.read_text())
+    # Add landing URLs to each offer
+    for o in offers.get("offers", []):
+        o["landing_url"] = f"/offer/{o['slug']}"
+    return offers
+
 app.add_middleware(CORSMiddleware)
 app.add_middleware(MetricsMiddleware)
 app.add_middleware(RateLimitMiddleware)
