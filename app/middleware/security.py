@@ -100,6 +100,7 @@ PUBLIC_PATHS = {
     "/offer/{slug}",
     "/offer/{slug}/checkout",
     "/offers",
+    "/gpu/queue",
     "/stripe/webhook",
 }
 

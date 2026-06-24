@@ -6,6 +6,7 @@ import asyncio
 import json
 import tarfile
 import subprocess
+from datetime import datetime
 from typing import Optional, List, Any, Dict
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, Form, File, UploadFile, Body
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, Response
@@ -3046,16 +3047,31 @@ async def offer_checkout(slug: str):
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
-    """Stripe webhook endpoint - verifies signature and records payment events."""
     import os
-    import hmac
+    from app.webhooks.validators import parse_stripe_event, verify_stripe_signature
+
     stripe_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     sig_header = request.headers.get("stripe-signature", "")
-    
+
     body = await request.body()
+    if not verify_stripe_signature(body, sig_header, stripe_secret):
+        raise HTTPException(status_code=401, detail="Invalid stripe signature")
+
     event = json.loads(body) if body else {}
-    
-    # Record payment event
+    event_type = event.get("type", "")
+
+    logger.info(f"Stripe webhook: {event_type} verified")
+
+    if event_type == "checkout.session.completed":
+        customer_email = event.get("data", {}).get("object", {}).get("customer_details", {}).get("email")
+        if customer_email:
+            db_path = "/home/scott/ai-lab/reports/customers/customers.db"
+            db.execute(
+                "INSERT OR IGNORE INTO customers (email, product, ts) VALUES (?, ?, datetime('now'))",
+                (customer_email, event.get("price_id", "unknown")),
+            )
+            db.commit()
+            record["email"] = customer_email
     events_path = Path("/home/scott/ai-lab/reports/payments/events.jsonl")
     events_path.parent.mkdir(parents=True, exist_ok=True)
     record = {
@@ -3064,6 +3080,19 @@ async def stripe_webhook(request: Request):
         "data": event.get("data", {}),
         "verified": bool(sig_header)
     }
+    
+    # Capture customer email
+    if event.get("type") == "checkout.session.completed":
+        customer_email = event.get("data", {}).get("object", {}).get("customer_details", {}).get("email")
+        if customer_email:
+            db_path = "/home/scott/ai-lab/reports/customers/customers.db"
+            db = sqlite3.connect(db_path)
+            db.execute("CREATE TABLE IF NOT EXISTS customers (email TEXT PRIMARY KEY, product TEXT, ts TEXT, followup_step INTEGER DEFAULT 0)")
+            db.execute("INSERT OR IGNORE INTO customers (email, product, ts) VALUES (?, ?, datetime('now'))", 
+                      (customer_email, event.get("price_id", "unknown")))
+            db.commit()
+            record["email"] = customer_email
+    
     with open(events_path, "a") as f:
         f.write(json.dumps(record) + "\n")
     
@@ -3080,6 +3109,48 @@ async def stripe_webhook(request: Request):
                 break
     
     return {"status": "processed", "event": event.get("type", "unknown")}
+
+
+@app.post("/gpu/queue")
+async def gpu_queue_endpoint(request: Request):
+    """Accept inference jobs and route to idle GPU."""
+    try:
+        data = await request.json()
+        prompt = data.get("prompt", "")[:500]
+        model = data.get("model", "llama3.2:3b")
+        api_key = request.headers.get("X-API-Key", "")
+        
+        # API key check - free for internal, paid for external
+        if api_key and api_key != os.environ.get("GPU_API_KEY", ""):
+            return {"status": "error", "error": "invalid API key"}
+        
+        # Find best GPU
+        import subprocess
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,utilization.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10
+        )
+        best_gpu = None
+        best_util = 100
+        for line in result.stdout.strip().splitlines():
+            idx, util = line.split(", ")
+            if int(util) < best_util:
+                best_gpu = int(idx)
+                best_util = int(util)
+        
+        if best_gpu is None:
+            return {"status": "error", "error": "no available GPU"}
+        
+        # Queue job
+        job_id = f"job-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        job = {"prompt": prompt, "model": model, "gpu": best_gpu, "status": "queued", "api_key": "paid" if api_key else "internal"}
+        job_path = Path(f"/home/scott/ai-lab/jobs/{job_id}.json")
+        job_path.parent.mkdir(parents=True, exist_ok=True)
+        job_path.write_text(json.dumps(job))
+        
+        return {"status": "queued", "job_id": job_id, "gpu": best_gpu, "price_per_sec": 0.0001}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 @app.get("/api/epic/dashboard")
