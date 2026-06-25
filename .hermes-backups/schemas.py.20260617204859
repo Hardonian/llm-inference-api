@@ -1,0 +1,210 @@
+"""Pydantic schemas for request/response validation."""
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, HttpUrl, validator
+from enum import Enum
+
+
+class WorkflowType(str, Enum):
+    TXT2IMG = "txt2img"
+    IMG2IMG = "img2img"
+    UPSCALE = "upscale"
+    INPAINT = "inpaint"
+    CONTROLNET = "controlnet"
+    VIDEO = "video"
+
+
+class PromptMode(str, Enum):
+    CINEMATIC = "cinematic"
+    REALISTIC_PHOTO = "realistic-photo"
+    PRIVATE_ADULT_FICTION = "private-adult-fiction"
+    FASHION = "fashion"
+    FITNESS = "fitness"
+    OFFICE_PROFESSIONAL = "office-professional"
+    ANIME = "anime"
+    PRODUCT_SHOT = "product-shot"
+    CUSTOM = "custom"
+
+
+class GenerateRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=10000, description="Generation prompt")
+    workflow: WorkflowType = Field(default=WorkflowType.TXT2IMG, description="Workflow type")
+    mode: PromptMode = Field(default=PromptMode.CINEMATIC, description="Prompt enhancement mode")
+    seed: Optional[int] = Field(None, ge=0, le=4294967295, description="Random seed")
+    steps: Optional[int] = Field(None, ge=1, le=150, description="Sampling steps")
+    cfg: Optional[float] = Field(None, ge=1.0, le=20.0, description="CFG scale")
+    width: Optional[int] = Field(None, ge=64, le=2048, multiple_of=64, description="Image width")
+    height: Optional[int] = Field(None, ge=64, le=2048, multiple_of=64, description="Image height")
+    batch_size: Optional[int] = Field(default=1, ge=1, le=4, description="Batch size")
+
+    @validator('prompt')
+    def validate_prompt(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Prompt cannot be empty")
+        return v.strip()
+
+
+class ImprovePromptRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=10000)
+    mode: PromptMode = Field(default=PromptMode.CINEMATIC)
+
+
+class ImprovePromptResponse(BaseModel):
+    improved_prompt: str
+    original_prompt: str
+    mode: PromptMode
+
+
+class UpscaleRequest(BaseModel):
+    image_path: str = Field(..., description="Path to image to upscale")
+    scale: Optional[int] = Field(default=4, ge=2, le=8)
+    model: Optional[str] = Field(default="4x-UltraSharp.pth")
+
+
+class VariationsRequest(BaseModel):
+    image_path: str = Field(..., description="Path to source image")
+    count: Optional[int] = Field(default=4, ge=1, le=8)
+    denoise: Optional[float] = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class WorkflowCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    nodes: List[Dict[str, Any]] = Field(..., min_items=1)
+    edges: List[Dict[str, Any]] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    is_mature: bool = Field(default=False)
+
+
+class WorkflowUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    nodes: Optional[List[Dict[str, Any]]] = None
+    edges: Optional[List[Dict[str, Any]]] = None
+    tags: Optional[List[str]] = None
+    is_mature: Optional[bool] = None
+
+
+class WorkflowResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+    tags: List[str]
+    is_mature: bool
+    created_at: int
+    updated_at: int
+    node_count: int
+
+
+class ModelType(str, Enum):
+    CHECKPOINT = "checkpoint"
+    LORA = "lora"
+    VAE = "vae"
+    EMBEDDING = "embedding"
+    CONTROLNET = "controlnet"
+    UPSCALER = "upscaler"
+
+
+class ModelDownloadRequest(BaseModel):
+    url: HttpUrl = Field(..., description="Model URL from CivitAI or HuggingFace")
+    type: ModelType = Field(..., description="Model type")
+    target_folder: str = Field(..., description="Target folder in ComfyUI models directory")
+    filename: Optional[str] = None
+
+
+class ModelInfo(BaseModel):
+    name: str
+    type: ModelType
+    size: str
+    path: str
+    downloaded_at: int
+    source_url: Optional[str] = None
+
+
+class SecurityScanRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=50000)
+
+
+class ThreatInfo(BaseModel):
+    id: str
+    category: str
+    pattern: str
+    severity: int
+    timestamp: int
+    source: str
+
+
+class AuditLogEntry(BaseModel):
+    timestamp: int
+    request_id: str
+    method: str
+    path: str
+    status: int
+    duration_ms: float
+    client_ip: str
+    user: str
+    user_agent: str
+
+
+class GPUProcess(BaseModel):
+    pid: int
+    name: str
+    vram: int
+    type: str
+
+
+class GPUDetail(BaseModel):
+    index: int
+    name: str
+    memory_used: int
+    memory_total: int
+    memory_percent: float
+    utilization: int
+    temperature: Optional[int] = None
+    power: Optional[int] = None
+    clock: Optional[int] = None
+    processes: List[GPUProcess] = []
+
+
+class OllamaModel(BaseModel):
+    name: str
+    size: int
+    size_gb: float
+    quantization: Optional[str] = None
+    family: Optional[str] = None
+    capabilities: List[str] = []
+
+
+class OllamaLaneStatus(BaseModel):
+    name: str
+    port: int
+    healthy: bool
+    memory: str
+    models: int
+
+
+class SystemHealth(BaseModel):
+    status: str
+    ollama_instances: Dict[str, bool]
+    timestamp: float
+
+
+class GenerateResponse(BaseModel):
+    success: bool
+    prompt_id: Optional[str] = None
+    message: str
+    workflow: Optional[str] = None
+
+
+class BatchGenerateRequest(BaseModel):
+    base_prompt: str = Field(..., min_length=1)
+    count: int = Field(..., ge=1, le=20)
+    workflow: WorkflowType = Field(default=WorkflowType.TXT2IMG)
+    mode: PromptMode = Field(default=PromptMode.CINEMATIC)
+    variation_strength: float = Field(default=0.3, ge=0.0, le=1.0)
+
+
+class ReportResponse(BaseModel):
+    content: str
+    generated_at: int

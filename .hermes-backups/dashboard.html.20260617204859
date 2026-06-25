@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Lab Command Center</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <!-- Particle background canvas -->
+    <canvas id="bg-canvas"></canvas>
+    
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" id="logo">AI</div>
+        <div>
+          <div class="brand-name">AI Lab</div>
+          <div class="brand-sub">Local Command Center</div>
+        </div>
+      </div>
+      <div class="xp-bar-container">
+        <div class="xp-bar" id="xp-bar">
+          <div class="xp-fill" id="xp-fill"></div>
+        </div>
+        <div class="xp-text" id="xp-text">Level 1 • 0 / 100 XP</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn icon-btn" id="theme-toggle" title="Toggle theme">◐</button>
+        <button class="btn primary" id="refresh-all">⟳ Refresh</button>
+        <button class="btn" id="btn-gpu-panel" title="GPU Panel">🎮 GPU</button>
+        <button class="btn" id="btn-lane-manager" title="Ollama Lanes">🦙 Lanes</button>
+        <button class="btn" id="btn-comfy-manager" title="ComfyUI Manager">📦 ComfyUI</button>
+        <button class="btn" id="btn-security" title="Security Center">🛡️ Security</button>
+        <button class="btn" id="btn-mature" title="Mature Workflows">🔞 Mature</button>
+        <button class="btn" id="btn-workflow" title="Workflow Builder">⚙️ Builder</button>
+        <a class="btn" href="http://localhost:8188" target="_blank">ComfyUI</a>
+        <a class="btn" href="http://localhost:3002" target="_blank">Open WebUI</a>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- Left Column: Status & GPUs -->
+      <aside class="sidebar">
+        <section class="panel">
+          <h2>System Status</h2>
+          <ul class="status-list" id="status-list">
+            <li class="status-item" data-service="llm-api">
+              <span class="status-indicator" id="llm-indicator"></span>
+              <span class="status-label">LLM API</span>
+              <span class="status-value" id="llm-status">—</span>
+            </li>
+            <li class="status-item" data-service="comfyui">
+              <span class="status-indicator" id="comfy-indicator"></span>
+              <span class="status-label">ComfyUI</span>
+              <span class="status-value" id="comfy-status">—</span>
+            </li>
+            <li class="status-item" data-service="openwebui">
+              <span class="status-indicator" id="openwebui-indicator"></span>
+              <span class="status-label">Open WebUI</span>
+              <span class="status-value" id="openwebui-status">—</span>
+            </li>
+            <li class="status-item" data-service="redis">
+              <span class="status-indicator" id="redis-indicator"></span>
+              <span class="status-label">Redis</span>
+              <span class="status-value" id="redis-status">—</span>
+            </li>
+            <li class="status-item" data-service="qdrant">
+              <span class="status-indicator" id="qdrant-indicator"></span>
+              <span class="status-label">Qdrant</span>
+              <span class="status-value" id="qdrant-status">—</span>
+            </li>
+            <li class="status-item" data-service="postgres">
+              <span class="status-indicator" id="postgres-indicator"></span>
+              <span class="status-label">Postgres</span>
+              <span class="status-value" id="postgres-status">—</span>
+            </li>
+            <li class="status-item" data-service="n8n">
+              <span class="status-indicator" id="n8n-indicator"></span>
+              <span class="status-label">n8n</span>
+              <span class="status-value" id="n8n-status">—</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="panel">
+          <h2>GPUs</h2>
+          <div class="gpu-grid" id="gpu-grid">
+            <div class="gpu-card loading" data-gpu="0">Loading...</div>
+            <div class="gpu-card loading" data-gpu="1">Loading...</div>
+            <div class="gpu-card loading" data-gpu="2">Loading...</div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Center: Main Workspace -->
+      <section class="main-workspace">
+        <!-- Ollama Lanes -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Ollama Lanes</h2>
+            <button class="btn small" id="refresh-ollama">⟳</button>
+          </div>
+          <div class="lane-grid" id="lane-grid">
+            <div class="lane-card loading" data-lane="v100">Loading...</div>
+            <div class="lane-card loading" data-lane="p40">Loading...</div>
+            <div class="lane-card loading" data-lane="3060">Loading...</div>
+          </div>
+        </section>
+
+        <!-- Prompt Studio -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Prompt Studio</h2>
+            <span class="xp-reward" id="prompt-xp-reward">+15 XP</span>
+          </div>
+          <div class="prompt-studio">
+            <div class="studio-row">
+              <div class="field">
+                <label>Mode</label>
+                <select id="prompt-mode" class="select">
+                  <option value="cinematic">🎬 Cinematic</option>
+                  <option value="realistic-photo">📸 Realistic Photo</option>
+                  <option value="private-adult-fiction">🔞 Private Adult Fiction</option>
+                  <option value="fashion">👗 Fashion</option>
+                  <option value="fitness">💪 Fitness</option>
+                  <option value="office-professional">💼 Office Professional</option>
+                  <option value="anime">🎌 Anime</option>
+                  <option value="product-shot">📦 Product Shot</option>
+                  <option value="custom">⚙️ Custom</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Workflow</label>
+                <select id="prompt-workflow" class="select">
+                  <option value="txt2img">Text → Image</option>
+                  <option value="img2img">Image → Image</option>
+                  <option value="upscale">Upscale</option>
+                  <option value="inpaint">Inpaint</option>
+                  <option value="controlnet">ControlNet</option>
+                  <option value="video">Video (SVD)</option>
+                </select>
+              </div>
+            </div>
+            <div class="field full">
+              <label>Prompt</label>
+              <textarea id="prompt-input" class="textarea" placeholder="Describe your vision...">{{prompt}}</textarea>
+              <div class="field-hint">Press Ctrl+Enter to optimize & queue</div>
+            </div>
+            <div class="studio-actions">
+              <button class="btn primary" id="optimize-queue">✨ Optimize + Queue</button>
+              <button class="btn" id="direct-queue">🚀 Direct Queue</button>
+              <button class="btn" id="improve-prompt">🔮 Improve Prompt</button>
+              <button class="btn" id="send-to-generate">📤 Send to Generate</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Upload / Drag Drop -->
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Workspace Upload</h2>
+            <span id="queue-count-badge" class="badge">0 queued</span>
+          </div>
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="file-input" multiple style="display:none" />
+            <div class="drop-inner">
+              <div class="drop-icon">📁</div>
+              <div class="drop-title">Drag & Drop Files</div>
+              <div class="drop-sub">Images, JSON workflows, prompts, LoRAs</div>
+              <button class="btn primary" id="choose-files">Choose Files</button>
+            </div>
+            <div class="upload-preview" id="upload-preview"></div>
+          </div>
+        </section>
+      </section>
+
+      <!-- Right Column: Activity & Quick Actions -->
+      <aside class="sidebar right">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Activity Log</h2>
+            <button class="btn small" id="clear-log">Clear</button>
+          </div>
+          <ul class="activity-log" id="activity-log">
+            <li class="activity-item system">System initialized</li>
+          </ul>
+        </section>
+
+        <section class="panel">
+          <h2>Quick Actions</h2>
+          <div class="action-grid">
+            <button class="action-btn" data-action="generate" title="Generate Image">
+              <span class="action-icon">🎨</span>
+              <span>Generate</span>
+            </button>
+            <button class="action-btn" data-action="upscale" title="Upscale Latest">
+              <span class="action-icon">🔍</span>
+              <span>Upscale</span>
+            </button>
+            <button class="action-btn" data-action="variations" title="Variations">
+              <span class="action-icon">🔄</span>
+              <span>Variations</span>
+            </button>
+            <button class="action-btn" data-action="batch" title="Batch Generate">
+              <span class="action-icon">📦</span>
+              <span>Batch</span>
+            </button>
+            <button class="action-btn" data-action="cleanup" title="Clean Old Outputs">
+              <span class="action-icon">🧹</span>
+              <span>Cleanup</span>
+            </button>
+            <button class="action-btn" data-action="backup" title="Backup Workflows">
+              <span class="action-icon">💾</span>
+              <span>Backup</span>
+            </button>
+            <button class="action-btn" data-action="report" title="Daily Report">
+              <span class="action-icon">📊</span>
+              <span>Report</span>
+            </button>
+            <button class="action-btn" data-action="heal" title="Self-Heal Check">
+              <span class="action-icon">🔧</span>
+              <span>Heal</span>
+            </button>
+            <button class="action-btn" data-action="security" title="Security Center">
+              <span class="action-icon">🛡️</span>
+              <span>Security</span>
+            </button>
+            <button class="action-btn" data-action="comfy" title="ComfyUI Manager">
+              <span class="action-icon">📦</span>
+              <span>ComfyUI</span>
+            </button>
+            <button class="action-btn" data-action="workflow" title="Workflow Builder">
+              <span class="action-icon">⚙️</span>
+              <span>Builder</span>
+            </button>
+            <button class="action-btn" data-action="mature" title="Mature Workflows">
+              <span class="action-icon">🔞</span>
+              <span>Mature</span>
+            </button>
+            <button class="action-btn" data-action="gpu" title="GPU Panel">
+              <span class="action-icon">🎮</span>
+              <span>GPU</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Badges</h2>
+          <div class="badges-grid" id="badges-grid">
+            <div class="badge locked" data-badge="first-gen" title="First Generation">🎨</div>
+            <div class="badge locked" data-badge="hundred-gen" title="100 Generations">💯</div>
+            <div class="badge locked" data-badge="gpu-master" title="All 3 GPUs Used">🎮</div>
+            <div class="badge locked" data-badge="workflow-creator" title="Custom Workflow">⚙️</div>
+            <div class="badge locked" data-badge="night-owl" title="Generated 12am-6am">🌙</div>
+            <div class="badge locked" data-badge="prompt-engineer" title="100 Prompt Improvements">🔮</div>
+            <div class="badge locked" data-badge="upscale-king" title="50 Upscales">🔍</div>
+            <div class="badge locked" data-badge="batch-commander" title="10 Batch Jobs">📦</div>
+            <div class="badge locked" data-badge="security-expert" title="Detected 10 Threats">🛡️</div>
+            <div class="badge locked" data-badge="model-curator" title="Downloaded 20 Models">📚</div>
+            <div class="badge locked" data-badge="node-master" title="Installed 10 Custom Nodes">🔧</div>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-left">Local-only mode • No data leaves this machine</div>
+      <div class="footer-right">v1.0.0 • <span id="uptime">—</span></div>
+    </footer>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- Modal template -->
+  <div id="modal-overlay" class="hidden">
+    <div class="modal" id="modal"></div>
+  </div>
+
+  <script type="module" src="/static/js/dashboard.js"></script>
+</body>
+</html>

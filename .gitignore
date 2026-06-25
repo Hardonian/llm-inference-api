@@ -1,15 +1,35 @@
-.env
-.venv/
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+*.pyo
+.venv/
+.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node
 node_modules/
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+
+# IDE
+.vscode/
+.idea/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log
-app/__pycache__/
-app/**/__pycache__/
-.hermes-backups/
-llm_inference_api.egg-info/
-uv.lock

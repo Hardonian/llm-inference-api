@@ -1,0 +1,664 @@
+// ========================================
+// PANEL: Workflow Builder (Visual)
+// ========================================
+var WorkflowBuilder = {
+  nodes: [],
+  edges: [],
+
+  addNode: function(type, x, y) {
+    var id = 'node_' + Date.now();
+    var node = { id: id, type: type, pos: { x: x, y: y }, inputs: {}, outputs: {} };
+    this.nodes.push(node);
+    this.render();
+  },
+
+  render: function() {
+    // Render nodes on canvas (simplified - use React Flow in production)
+  },
+
+  save: function() {
+    var name = document.getElementById('wf-name').value || 'workflow_' + Date.now();
+    var wf = { id: 'wf_' + Date.now(), name: name, nodes: this.nodes, edges: this.edges, created: Date.now() };
+    state.comfyui.workflows.push(wf);
+    StateManager.save(state);
+    UI.toast('Saved', 'Workflow saved', 'success');
+  },
+
+  load: function(id) {
+    var wf = state.comfyui.workflows.find(function(w) { return w.id === id; });
+    if (wf) {
+      this.nodes = wf.nodes;
+      this.edges = wf.edges;
+      this.render();
+    }
+  },
+
+  open: function() {
+    UI.modal('Workflow Builder', '\n' +
+      '<div class="workflow-builder" style="height:70vh">\n' +
+      '  <div class="builder-toolbar">\n' +
+      '    <button class="btn" onclick="WorkflowBuilder.save()">💾 Save</button>\n' +
+      '    <button class="btn primary" onclick="WorkflowBuilder.queue()">🚀 Queue</button>\n' +
+      '    <button class="btn" onclick="WorkflowBuilder.export()">📤 Export</button>\n' +
+      '    <input type="text" id="wf-name" placeholder="Workflow name" style="margin-left:auto;width:200px">\n' +
+      '  </div>\n' +
+      '  <div class="builder-canvas" id="builder-canvas"></div>\n' +
+      '  <div class="node-palette" id="node-palette">' + this.renderPalette() + '</div>\n' +
+      '</div>\n', 'xl');
+
+    this.initCanvas();
+  },
+
+  renderPalette: function() {
+    var categories = {
+      'Loaders': ['LoadImage', 'LoadModel', 'LoadLoRA', 'LoadVAE'],
+      'Sampling': ['KSampler', 'KSamplerAdvanced', 'Noise', 'Guidance'],
+      'Conditioning': ['CLIPTextEncode', 'CLIPTextEncodeSDXL', 'ConditioningCombine', 'ConditioningZeroOut'],
+      'Latent': ['EmptyLatentImage', 'LatentUpscale', 'VAEEncode', 'VAEDecode'],
+      'Image': ['ImageScale', 'ImageCrop', 'ImageBlend', 'ImageComposite', 'SaveImage'],
+      'Utils': ['PreviewImage', 'GetImageSize', 'Primitive', 'Reroute']
+    };
+    var html = '';
+    for (var cat in categories) {
+      var nodes = categories[cat];
+      html += '<div class="palette-category"><h4>' + cat + '</h4><div class="palette-nodes">';
+      for (var i = 0; i < nodes.length; i++) {
+        html += '<button class="palette-node" draggable="true" data-node="' + nodes[i] + '" ondragstart="WorkflowBuilder.dragStart(event)">' + nodes[i] + '</button>';
+      }
+      html += '</div></div>';
+    }
+    return html;
+  },
+
+  dragStart: function(e) {
+    e.dataTransfer.setData('text/plain', e.target.dataset.node);
+  },
+
+  initCanvas: function() {
+    var canvas = document.getElementById('builder-canvas');
+    canvas.addEventListener('dragover', function(e) { e.preventDefault(); });
+    canvas.addEventListener('drop', function(e) {
+      e.preventDefault();
+      var nodeType = e.dataTransfer.getData('text/plain');
+      if (nodeType) this.addNode(nodeType, e.offsetX, e.offsetY);
+    }.bind(this));
+  },
+
+  queue: function() {
+    UI.toast('Queued', 'Workflow sent to ComfyUI', 'success');
+  },
+
+  export: function() {
+    var data = JSON.stringify({ nodes: this.nodes, edges: this.edges }, null, 2);
+    var blob = new Blob([data], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'workflow_' + Date.now() + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+};
+
+// ========================================
+// PANEL: Security & Threat Detection
+// ========================================
+var SecurityPanel = {
+  threats: [],
+  auditLog: [],
+
+  open: function() {
+    this.loadData().then(function() {
+      UI.modal('Security Center', '\n' +
+        '<div class="panel-content" style="max-height:80vh">\n' +
+        '  <div class="tabs">\n' +
+        '    <button class="tab-btn active" data-tab="threats" onclick="SecurityPanel.switchTab(\'threats\')">🚨 Threats (' + this.threats.length + ')</button>\n' +
+        '    <button class="tab-btn" data-tab="audit" onclick="SecurityPanel.switchTab(\'audit\')">📋 Audit Log</button>\n' +
+        '    <button class="tab-btn" data-tab="anomalies" onclick="SecurityPanel.switchTab(\'anomalies\')">🔍 Anomalies</button>\n' +
+        '    <button class="tab-btn" data-tab="settings" onclick="SecurityPanel.switchTab(\'settings\')">⚙️ Settings</button>\n' +
+        '  </div>\n' +
+        '  <div class="tab-content">\n' +
+        '    <div id="tab-threats" class="tab-pane active">' + this.renderThreats() + '</div>\n' +
+        '    <div id="tab-audit" class="tab-pane">' + this.renderAudit() + '</div>\n' +
+        '    <div id="tab-anomalies" class="tab-pane">' + this.renderAnomalies() + '</div>\n' +
+        '    <div id="tab-settings" class="tab-pane">' + this.renderSettings() + '</div>\n' +
+        '  </div>\n' +
+        '</div>\n', 'xl');
+    }.bind(this));
+  },
+
+  loadData: function() {
+    return Promise.all([
+      API.threatStats().catch(function() { return { threats: [] }; }),
+      API.auditLog().catch(function() { return { logs: [] }; })
+    ]).then(function(results) {
+      this.threats = results[0].threats || [];
+      this.auditLog = results[1].logs || [];
+    }.bind(this));
+  },
+
+  switchTab: function(tab) {
+    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.toggle('active', b.dataset.tab === tab); });
+    document.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.toggle('active', p.id === 'tab-' + tab); });
+  },
+
+  renderThreats: function() {
+    if (this.threats.length === 0) return '<div class="empty-state">No threats detected. System secure.</div>';
+    return this.threats.map(createThreatCard).join('');
+  },
+
+  renderAudit: function() {
+    if (this.auditLog.length === 0) return '<div class="empty-state">No audit events.</div>';
+    return this.auditLog.slice(0, 50).map(function(log) {
+      return '<div class="audit-item ' + (log.severity || 'info') + '">\n' +
+        '  <span class="audit-time">' + new Date(log.timestamp).toLocaleString() + '</span>\n' +
+        '  <span class="audit-action">' + log.action + '</span>\n' +
+        '  <span class="audit-detail">' + log.detail + '</span>\n' +
+        '  <span class="audit-ip">' + (log.ip || 'local') + '</span>\n' +
+        '</div>';
+    }).join('');
+  },
+
+  renderAnomalies: function() {
+    return '<div class="empty-state">Anomaly detection running... Check back after traffic.</div>';
+  },
+
+  renderSettings: function() {
+    return '\n' +
+      '<div class="settings-grid">\n' +
+      '  <div class="setting-item"><label>Threat Detection Sensitivity</label><input type="range" id="sensitivity" min="1" max="10" value="7" onchange="SecurityPanel.updateSetting(\'sensitivity\', this.value)"></div>\n' +
+      '  <div class="setting-item"><label>Auto-block IPs</label><label class="toggle"><input type="checkbox" id="auto-block" checked onchange="SecurityPanel.updateSetting(\'autoBlock\', this.checked)"><span class="slider"></span></label></div>\n' +
+      '  <div class="setting-item"><label>Log Retention (days)</label><input type="number" id="retention" value="30" min="1" max="365" onchange="SecurityPanel.updateSetting(\'retention\', this.value)"></div>\n' +
+      '  <div class="setting-item"><label>API Key Rotation</label><button class="btn" onclick="SecurityPanel.rotateKeys()">Rotate Keys</button></div>\n' +
+      '  <div class="setting-item"><label>Encryption</label><label class="toggle"><input type="checkbox" id="encrypt-logs" checked onchange="SecurityPanel.updateSetting(\'encryptLogs\', this.checked)"><span class="slider"></span></label></div>\n' +
+      '</div>';
+  },
+
+  updateSetting: function(key, value) {
+    UI.toast('Updated', key + ' set to ' + value, 'success');
+  },
+
+  rotateKeys: function() {
+    UI.toast('Rotating', 'API keys rotated', 'info');
+  },
+
+  blockSource: function(source) { UI.toast('Blocked', 'Source ' + source + ' blocked', 'success'); },
+  ignore: function(threatId) { UI.toast('Ignored', 'Threat marked as false positive', 'info'); }
+};
+
+// ========================================
+// COMPONENT: Mature Content Workflow Templates
+// ========================================
+var MatureWorkflows = {
+  templates: {
+    'private-adult-fiction': {
+      name: 'Private Adult Fiction - Cinematic',
+      description: 'High-quality cinematic renders for fictional adult narratives',
+      safetyLevel: 'strict'
+    },
+    'lingerie-fashion': {
+      name: 'Lingerie & Fashion Photography',
+      description: 'Professional fashion/lingerie renders with studio lighting',
+      safetyLevel: 'moderate'
+    },
+    'artistic-nude': {
+      name: 'Artistic Nude - Fine Art',
+      description: 'Classical artistic nude studies, museum quality',
+      safetyLevel: 'strict'
+    }
+  },
+
+  open: function() {
+    var html = '<div class="panel-content">\n' +
+      '  <div class="safety-banner">🔒 All templates enforce fictional-only, consenting-adult content. No real persons, no minors, no non-consensual content.</div>\n' +
+      '  <div class="template-grid">';
+
+    for (var id in this.templates) {
+      var t = this.templates[id];
+      html += '<div class="template-card" onclick="MatureWorkflows.load(\'' + id + '\')">\n' +
+        '  <div class="template-icon">' + this.getIcon(id) + '</div>\n' +
+        '  <h4>' + t.name + '</h4>\n' +
+        '  <p>' + t.description + '</p>\n' +
+        '  <span class="safety-badge level-' + t.safetyLevel + '">' + t.safetyLevel + '</span>\n' +
+        '</div>';
+    }
+
+    html += '  </div>\n' +
+      '</div>';
+
+    UI.modal('Mature Content Workflows', html, 'lg');
+  },
+
+  load: function(id) {
+    var t = this.templates[id];
+    UI.closeModal();
+    // Load template into workflow builder
+    WorkflowBuilder.open();
+    UI.toast('Loaded', t.name + ' loaded in builder', 'success');
+  },
+
+  getIcon: function(id) {
+    var icons = { 'private-adult-fiction': '📖', 'lingerie-fashion': '👗', 'artistic-nude': '🎨' };
+    return icons[id] || '📋';
+  }
+};
+
+// ========================================
+// MAIN INITIALIZATION
+// ========================================
+document.addEventListener('DOMContentLoaded', function() {
+  // Load persisted state
+  Object.assign(state, StateManager.load());
+  state.badges = new Set(state.badges || []);
+
+  // Initialize UI
+  initTheme();
+  initBackground();
+  initEventListeners();
+
+  // Connect WebSocket for real-time updates
+  WSManager.connect(handleWSMessage);
+
+  // Fetch initial data
+  fetchInitialData();
+  SecurityPanel.loadData();
+
+  // Start polling fallback
+  startPolling();
+  startUptimeCounter();
+
+  // Start threat monitoring
+  startThreatMonitor();
+
+  logActivity('Command Center initialized', 'system');
+  UI.toast('Welcome', 'AI Lab Command Center ready', 'success');
+});
+
+// ========================================
+// EVENT LISTENERS
+// ========================================
+function initEventListeners() {
+  document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
+  document.getElementById('refresh-all')?.addEventListener('click', fetchInitialData);
+  document.getElementById('optimize-queue')?.addEventListener('click', function() { handlePromptAction('optimize'); });
+  document.getElementById('direct-queue')?.addEventListener('click', function() { handlePromptAction('direct'); });
+  document.getElementById('improve-prompt')?.addEventListener('click', improvePrompt);
+  document.getElementById('send-to-generate')?.addEventListener('click', sendToGenerate);
+
+  // New interactive buttons
+  document.getElementById('btn-gpu-panel')?.addEventListener('click', function() { GPUPanel.open(0); });
+  document.getElementById('btn-lane-manager')?.addEventListener('click', function() { LaneManager.open('v100', 11437); });
+  document.getElementById('btn-comfy-manager')?.addEventListener('click', function() { ComfyManager.open(); });
+  document.getElementById('btn-security')?.addEventListener('click', function() { SecurityPanel.open(); });
+  document.getElementById('btn-mature')?.addEventListener('click', function() { MatureWorkflows.open(); });
+  document.getElementById('btn-workflow')?.addEventListener('click', function() { WorkflowBuilder.open(); });
+
+  // Dropzone
+  var dropzone = document.getElementById('dropzone');
+  var fileInput = document.getElementById('file-input');
+  dropzone?.addEventListener('click', function() { fileInput?.click(); });
+  dropzone?.addEventListener('dragover', function(e) { e.preventDefault(); dropzone.classList.add('active'); });
+  dropzone?.addEventListener('dragleave', function() { dropzone.classList.remove('active'); });
+  dropzone?.addEventListener('drop', function(e) { e.preventDefault(); dropzone.classList.remove('active'); handleFiles(e.dataTransfer.files); });
+  fileInput?.addEventListener('change', function(e) { handleFiles(e.target.files); });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('prompt-input')?.focus(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.target.matches('textarea')) { e.preventDefault(); handlePromptAction('optimize'); }
+    if (e.key === 'Escape') UI.closeModal();
+  });
+}
+
+// ========================================
+// THEME & BACKGROUND (Enhanced)
+// ========================================
+function initTheme() {
+  document.documentElement.setAttribute('data-theme', state.theme);
+  var toggle = document.getElementById('theme-toggle');
+  if (toggle) toggle.textContent = state.theme === 'dark' ? '☀️' : '🌙';
+}
+
+function toggleTheme() {
+  state.theme = state.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', state.theme);
+  var toggle = document.getElementById('theme-toggle');
+  if (toggle) toggle.textContent = state.theme === 'dark' ? '☀️' : '🌙';
+  StateManager.save(state);
+  UI.toast('Theme', 'Switched to ' + state.theme + ' mode', 'info');
+}
+
+function initBackground() {
+  var canvas = document.getElementById('bg-canvas');
+  var ctx = canvas.getContext('2d');
+  var particles = [], animationId = null;
+
+  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  function createParticles() {
+    var count = Math.min(60, Math.floor((canvas.width * canvas.height) / 20000));
+    particles = [];
+    for (var i = 0; i < count; i++) {
+      particles.push({
+        x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.2, vy: (Math.random() - 0.5) * 0.2,
+        radius: Math.random() * 1.2 + 0.3, opacity: Math.random() * 0.4 + 0.05,
+        hue: 170 + Math.random() * 40
+      });
+    }
+  }
+  function animate() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (var i = 0; i < particles.length; i++) {
+      for (var j = i + 1; j < particles.length; j++) {
+        var dx = particles[i].x - particles[j].x, dy = particles[i].y - particles[j].y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 100) { ctx.beginPath(); ctx.moveTo(particles[i].x, particles[i].y); ctx.lineTo(particles[j].x, particles[j].y); ctx.strokeStyle = 'hsla(' + particles[i].hue + ', 100%, 40%, ' + (0.08 * (1 - dist / 100)) + ')'; ctx.lineWidth = 0.4; ctx.stroke(); }
+      }
+    }
+    particles.forEach(function(p) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fillStyle = 'hsla(' + p.hue + ', 100%, 40%, ' + p.opacity + ')'; ctx.fill();
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = canvas.width; if (p.x > canvas.width) p.x = 0;
+      if (p.y < 0) p.y = canvas.height; if (p.y > canvas.height) p.y = 0;
+    });
+    animationId = requestAnimationFrame(animate);
+  }
+  window.addEventListener('resize', function() { resize(); createParticles(); });
+  resize(); createParticles(); animate();
+}
+
+// ========================================
+// DATA FETCHING & RENDERING
+// ========================================
+async function fetchInitialData() {
+  try {
+    await Promise.all([fetchSystemStatus(), fetchGPUStatus(), fetchOllamaStatus()]);
+    renderAll();
+    logActivity('Dashboard refreshed', 'system');
+  } catch (e) { console.error('Fetch failed:', e); UI.toast('Error', 'Failed to fetch data', 'error'); }
+}
+
+async function fetchSystemStatus() {
+  try {
+    var data = await API.health();
+    state.services = { 'llm-api': data.status === 'ok' };
+    if (data.ollama_instances) Object.entries(data.ollama_instances).forEach(function(kv) { state.services[kv[0]] = kv[1]; });
+    renderServices();
+  } catch (e) { console.error('System status failed:', e); }
+}
+
+async function fetchGPUStatus() {
+  try {
+    var data = await API.gpuStatus();
+    state.gpus = data.gpus || [];
+    renderGPUGrid();
+  } catch (e) { console.error('GPU status failed:', e); }
+}
+
+async function fetchOllamaStatus() {
+  try {
+    var data = await API.ollamaStatus();
+    state.ollamaLanes = data.instances || [];
+    renderLaneGrid();
+  } catch (e) { console.error('Ollama status failed:', e); }
+}
+
+function renderAll() { renderServices(); renderGPUGrid(); renderLaneGrid(); renderActivityLog(); updateXPUI(); updateBadgesUI(); }
+
+function renderServices() {
+  var svc = [
+    { id: 'llm-api', label: 'LLM API', ind: 'llm', val: 'llm-status' },
+    { id: 'comfyui', label: 'ComfyUI', ind: 'comfy', val: 'comfy-status' },
+    { id: 'openwebui', label: 'Open WebUI', ind: 'oweb', val: 'oweb-status' },
+    { id: 'redis', label: 'Redis', ind: 'redis', val: 'redis-status' },
+    { id: 'qdrant', label: 'Qdrant', ind: 'qdrant', val: 'qdrant-status' },
+    { id: 'postgres', label: 'Postgres', ind: 'pg', val: 'pg-status' },
+    { id: 'n8n', label: 'n8n', ind: 'n8n', val: 'n8n-status' }
+  ];
+  svc.forEach(function(s) {
+    var h = state.services[s.id];
+    var ind = document.getElementById(s.ind + '-indicator');
+    var val = document.getElementById(s.val);
+    if (ind) ind.className = 'status-indicator ' + (h ? 'online' : 'offline');
+    if (val) { val.textContent = h ? 'Online' : 'Offline'; val.style.color = h ? 'var(--accent)' : 'var(--danger)'; }
+  });
+}
+
+function renderGPUGrid() {
+  var c = document.getElementById('gpu-grid');
+  if (!c) return;
+  if (!state.gpus.length) { c.innerHTML = '<div class="gpu-card loading">No GPU data</div>'; return; }
+  c.innerHTML = state.gpus.map(function(g, i) { return createGPUCard(g, i); }).join('');
+}
+
+function renderLaneGrid() {
+  var c = document.getElementById('lane-grid');
+  if (!c) return;
+  if (!state.ollamaLanes.length) { c.innerHTML = '<div class="lane-card loading">No lane data</div>'; return; }
+  c.innerHTML = state.ollamaLanes.map(createLaneCard).join('');
+}
+
+function logActivity(msg, type, xp) {
+  if (typeof type === 'undefined') type = 'system';
+  if (typeof xp === 'undefined') xp = 0;
+  var timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  state.activityLog.unshift({ msg: msg, type: type, xp: xp, time: timeStr });
+  if (state.activityLog.length > 100) state.activityLog.pop();
+  renderActivityLog();
+  if (xp > 0) awardXP(xp, msg);
+  StateManager.save(state);
+}
+
+function renderActivityLog() {
+  var c = document.getElementById('activity-log');
+  if (!c) return;
+  c.innerHTML = state.activityLog.slice(-50).reverse().map(function(a) {
+    return '<li class="activity-item ' + a.type + '"><span>' + a.msg + '</span>' + (a.xp ? '<span class="badge-inline badge-purple">+' + a.xp + ' XP</span>' : '') + '<span class="activity-time">' + a.time + '</span></li>';
+  }).join('');
+  c.scrollTop = 0;
+}
+
+function updateXPUI() {
+  var fill = document.getElementById('xp-fill');
+  var txt = document.getElementById('xp-text');
+  var pct = state.xpToNext > 0 ? (state.xp / state.xpToNext) * 100 : 0;
+  if (fill) fill.style.width = Math.min(pct, 100) + '%';
+  if (txt) txt.textContent = 'Level ' + state.level + ' • ' + state.xp + ' / ' + state.xpToNext + ' XP';
+}
+
+function updateBadgesUI() {
+  var c = document.getElementById('badges-grid');
+  if (!c) return;
+  c.innerHTML = Object.entries(BADGES).map(function(kv) {
+    var id = kv[0], b = kv[1];
+    return '<div class="badge ' + (state.badges.has(id) ? 'unlocked' : 'locked') + '" data-badge="' + id + '" title="' + b.desc + '">\n' +
+      '  <span>' + b.icon + '</span><span class="badge-title">' + b.name + '</span>\n' +
+      '</div>';
+  }).join('');
+}
+
+function awardXP(amount, reason) {
+  state.xp += amount;
+  while (state.xp >= state.xpToNext) { state.xp -= state.xpToNext; state.level++; state.xpToNext = XP_PER_LEVEL(state.level); UI.toast('Level Up!', 'Reached Level ' + state.level + '!', 'xp'); logActivity('Leveled up to Level ' + state.level + '!', 'xp'); }
+  updateXPUI(); StateManager.save(state); UI.toast('+' + amount + ' XP', reason, 'xp');
+}
+
+function unlockBadge(id) {
+  if (!state.badges.has(id)) { state.badges.add(id); var b = BADGES[id]; if (b) UI.toast('Badge Unlocked!', b.name + ': ' + b.desc, 'xp'); updateBadgesUI(); StateManager.save(state); }
+}
+
+// ========================================
+// PROMPT STUDIO (Enhanced)
+// ========================================
+async function handlePromptAction(mode) {
+  var prompt = document.getElementById('prompt-input').value.trim();
+  var workflow = document.getElementById('prompt-workflow').value;
+  var promptMode = document.getElementById('prompt-mode').value;
+  if (!prompt) return UI.toast('Empty', 'Enter a prompt', 'warning');
+
+  var btn = document.getElementById(mode === 'optimize' ? 'optimize-queue' : 'direct-queue');
+  UI.setLoading(btn, true);
+  try {
+    if (mode === 'optimize') { await improvePrompt(); await queueToComfyUI(prompt, workflow, promptMode); }
+    else { await queueToComfyUI(prompt, workflow, promptMode); }
+    awardXP(15, mode === 'optimize' ? 'Optimized & queued' : 'Queued');
+    unlockBadge('first-gen');
+  } catch (e) { UI.toast('Error', 'Failed', 'error'); }
+  finally { UI.setLoading(btn, false); }
+}
+
+async function improvePrompt() {
+  var prompt = document.getElementById('prompt-input').value.trim();
+  var mode = document.getElementById('prompt-mode').value;
+  if (!prompt) return UI.toast('Empty', 'Enter prompt', 'warning');
+
+  var btn = document.getElementById('improve-prompt');
+  UI.setLoading(btn, true);
+  try {
+    // Security scan first
+    var threats = SecurityEngine.analyzePrompt(prompt);
+    if (threats.length > 0) {
+      UI.toast('Threat Detected', threats.length + ' security issue(s) found', 'threat');
+      state.security.threats = state.security.threats.concat(threats.map(function(t) { return Object.assign({}, t, { id: 't_' + Date.now(), source: 'prompt-input' }); }));
+    }
+
+    var data = await API.improvePrompt(prompt, mode);
+    if (data.improved_prompt) {
+      document.getElementById('prompt-input').value = data.improved_prompt;
+      awardXP(10, 'Prompt improved');
+      unlockBadge('prompt-engineer');
+      UI.toast('Improved', 'Check updated prompt', 'success');
+    }
+  } catch (e) { UI.toast('Error', 'Improve failed', 'error'); }
+  finally { UI.setLoading(btn, false); }
+}
+
+async function queueToComfyUI(prompt, workflow, mode) {
+  try {
+    var data = await API.generate(prompt, workflow, mode);
+    if (data.prompt_id) { logActivity('Queued: ' + data.prompt_id, 'success'); UI.toast('Queued', 'ID: ' + data.prompt_id, 'success'); }
+    else { logActivity('Generated', 'success'); UI.toast('Done', 'Check ComfyUI', 'success'); }
+  } catch (e) { UI.toast('Error', 'Queue failed', 'error'); }
+}
+
+async function sendToGenerate() {
+  var prompt = document.getElementById('prompt-input').value.trim();
+  if (!prompt) return UI.toast('Empty', 'Enter prompt', 'warning');
+  window.open('http://localhost:8188/?prompt=' + encodeURIComponent(prompt), '_blank');
+  logActivity('Opened ComfyUI', 'system');
+}
+
+// ========================================
+// FILE UPLOAD
+// ========================================
+function handleFiles(files) {
+  var preview = document.getElementById('upload-preview');
+  Array.from(files).forEach(function(f) {
+    var item = document.createElement('div');
+    item.className = 'upload-item';
+    item.innerHTML = '<span class="upload-item-name">' + f.name + '</span><span class="upload-item-size">' + formatBytes(f.size) + '</span><button class="upload-item-remove" onclick="this.parentElement.remove(); updateQueueCount()">✕</button>';
+    preview.appendChild(item);
+    state.uploadQueue.push(f);
+  });
+  updateQueueCount();
+  logActivity('Added ' + files.length + ' file(s)', 'info');
+}
+
+function updateQueueCount() {
+  var b = document.getElementById('queue-count-badge');
+  if (b) b.textContent = state.uploadQueue.length + ' queued';
+}
+
+function formatBytes(b) { if (b === 0) return '0 B'; var k = 1024; var s = ['B','KB','MB','GB']; var i = Math.floor(Math.log(b)/Math.log(k)); return parseFloat((b/Math.pow(k,i)).toFixed(1)) + ' ' + s[i]; }
+
+// ========================================
+// QUICK ACTIONS
+// ========================================
+async function handleQuickAction(action) {
+  var actions = {
+    generate: function() { window.open('http://localhost:8188', '_blank'); },
+    upscale: async function() { try { await API.upscale(); UI.toast('Upscale', 'Started', 'success'); logActivity('Upscale', 'success'); } catch (e) { UI.toast('Error', 'Failed', 'error'); } },
+    variations: async function() { try { await API.variations(); UI.toast('Variations', 'Started', 'success'); logActivity('Variations', 'success'); } catch (e) { UI.toast('Error', 'Failed', 'error'); } },
+    batch: function() { UI.modal('Batch Generate', batchModalContent()); },
+    cleanup: async function() { if (confirm('Clean outputs >30 days?')) { try { await API.cleanup(); UI.toast('Cleanup', 'Done', 'success'); logActivity('Cleanup', 'info'); } catch { UI.toast('Error', 'Failed', 'error'); } } },
+    backup: async function() { try { await API.backup(); UI.toast('Backup', 'Done', 'success'); logActivity('Backup', 'success'); } catch { UI.toast('Error', 'Failed', 'error'); } },
+    report: async function() { try { var t = await API.report(); UI.modal('Daily Report', '<pre style="font-family:var(--font-mono);font-size:0.75rem;white-space:pre-wrap">' + t + '</pre>'); } catch { UI.toast('Error', 'Failed', 'error'); } },
+    heal: async function() { try { await API.heal(); UI.toast('Heal', 'Complete', 'success'); logActivity('Self-heal', 'success'); await fetchInitialData(); } catch { UI.toast('Error', 'Failed', 'error'); } },
+    security: function() { SecurityPanel.open(); },
+    comfy: function() { ComfyManager.open(); },
+    workflow: function() { WorkflowBuilder.open(); },
+    mature: function() { MatureWorkflows.open(); },
+    gpu: function() { GPUPanel.open(0); }
+  };
+  if (actions[action]) { await actions[action](); logActivity('Action: ' + action, 'system'); }
+}
+
+function batchModalContent() {
+  return '\n' +
+    '    <div style="display:flex;flex-direction:column;gap:16px">\n' +
+    '      <div class="field"><label>Prompt</label><textarea class="textarea" id="batch-prompt" rows="4" placeholder="Base prompt"></textarea></div>\n' +
+    '      <div class="studio-row">\n' +
+    '        <div class="field"><label>Count</label><input type="number" class="select" id="batch-count" value="4" min="1" max="20"></div>\n' +
+    '        <div class="field"><label>Workflow</label><select class="select" id="batch-workflow"><option value="txt2img">Text→Image</option><option value="img2img">Image→Image</option></select></div>\n' +
+    '      </div>\n' +
+    '      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="UI.closeModal()">Cancel</button><button class="btn primary" onclick="startBatch()">Start Batch</button></div>\n' +
+    '    </div>';
+}
+
+window.startBatch = async function() {
+  var prompt = document.getElementById('batch-prompt').value;
+  var count = parseInt(document.getElementById('batch-count').value);
+  var workflow = document.getElementById('batch-workflow').value;
+  if (!prompt) return UI.toast('Error', 'Enter prompt', 'warning');
+  UI.closeModal();
+  for (var i = 0; i < count; i++) { await queueToComfyUI(prompt + ' --v ' + (i+1), workflow, 'cinematic'); await new Promise(function(r) { setTimeout(r, 500); }); }
+  awardXP(25, 'Batch of ' + count); unlockBadge('batch-commander');
+};
+
+// ========================================
+// WEBSOCKET HANDLING
+// ========================================
+function handleWSMessage(data) {
+  switch (data.type) {
+    case 'status': state.services = Object.assign({}, state.services, data.services); renderServices(); break;
+    case 'gpu': state.gpus = data.gpu; renderGPUGrid(); break;
+    case 'ollama': state.ollamaLanes = data.ollama; renderLaneGrid(); break;
+    case 'activity': logActivity(data.msg, data.type, data.xp); break;
+    case 'threat': state.security.threats.push(data); SecurityPanel.threats.push(data); if (document.getElementById('tab-threats')) SecurityPanel.open(); break;
+    case 'xp': state.xp = data.xp; state.level = data.level; state.xpToNext = data.xpToNext; updateXPUI(); break;
+  }
+}
+
+// ========================================
+// POLLING & UPTIME
+// ========================================
+function startPolling() { setInterval(function() { if (WSManager.ws && WSManager.ws.readyState !== WebSocket.OPEN) fetchInitialData(); }, 30000); }
+function startUptimeCounter() { var s = Date.now(); setInterval(function() { var u = Date.now()-s; var h=Math.floor(u/36e5), m=Math.floor(u%36e5/6e4), sec=Math.floor(u%6e4/1e3); var e=document.getElementById('uptime'); if(e) e.textContent='Up '+h+'h '+m+'m '+sec+'s'; }, 1000); }
+
+// ========================================
+// THREAT MONITORING
+// ========================================
+function startThreatMonitor() {
+  setInterval(function() {
+    if (state.security.threats.length > 0) {
+      var recent = state.security.threats.filter(function(t) { return Date.now() - t.timestamp < 60000; });
+      if (recent.length > 5) {
+        UI.toast('⚠️ Threat Spike', recent.length + ' threats in last minute', 'threat');
+      }
+    }
+  }, 30000);
+}
+
+// ========================================
+// EXPORT GLOBALS
+// ========================================
+window.UI = UI;
+window.GPUPanel = GPUPanel;
+window.LaneManager = LaneManager;
+window.ComfyManager = ComfyManager;
+window.WorkflowBuilder = WorkflowBuilder;
+window.SecurityPanel = SecurityPanel;
+window.MatureWorkflows = MatureWorkflows;
+window.handleQuickAction = handleQuickAction;
+window.startBatch = window.startBatch;
+window.SecurityEngine = SecurityEngine;

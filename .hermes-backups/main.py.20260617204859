@@ -1,0 +1,818 @@
+from contextlib import asynccontextmanager
+from pathlib import Path
+import time
+import os
+import asyncio
+from typing import Optional, List
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, HTTPException, Form, File, UploadFile
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.security import OAuth2PasswordRequestForm
+from jinja2 import Environment, FileSystemLoader
+import httpx
+
+from app.config import settings
+from app.core.exceptions import LLMInferenceError
+from app.core.logging import configure_logging, get_logger
+from app.middleware.auth import get_current_user_optional, require_permission, create_access_token, create_refresh_token, verify_refresh_token
+from app.middleware.metrics import MetricsMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.security import SecurityMiddleware, CORSMiddleware
+from app.services.ollama import ollama_manager
+from app.services.usage import UsageTracker
+from app.services.comfyui import comfyui_service
+from app.services.security import security_service
+from app.models.schemas import (
+    GenerateRequest, ImprovePromptRequest, WorkflowCreate, WorkflowUpdate,
+    ModelDownloadRequest, SecurityScanRequest, UpscaleRequest, VariationsRequest,
+    BatchGenerateRequest, WorkflowType, PromptMode, ModelType,
+)
+
+configure_logging(debug=settings.debug)
+logger = get_logger("llm-inference-api")
+
+# Custom Jinja2Templates with fixed cache key handling
+class FixedJinja2Templates(Jinja2Templates):
+    def __init__(self, directory: str):
+        super().__init__(directory)
+        self.env = Environment(
+            loader=FileSystemLoader(directory),
+            autoescape=True,
+            enable_async=True,
+            cache_size=0,
+        )
+
+templates = FixedJinja2Templates(directory=Path(__file__).resolve().parent / "templates")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("starting app", app=settings.app_name, env=settings.environment)
+    await ollama_manager.health_check_all()
+    yield
+    await ollama_manager.close()
+    logger.info("shutting down")
+
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    lifespan=lifespan,
+)
+app.add_middleware(SecurityMiddleware, enable_auth=True)
+app.add_middleware(CORSMiddleware)
+app.add_middleware(MetricsMiddleware)
+app.add_middleware(RateLimitMiddleware)
+
+app.mount(
+    "/admin",
+    StaticFiles(directory=Path(__file__).resolve().parents[1] / "admin", html=True),
+    name="admin",
+)
+app.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).resolve().parent / "static"),
+    name="static",
+)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    template = templates.env.get_template("dashboard.html")
+    content = await template.render_async({"request": request, "data": {}})
+    return HTMLResponse(content=content)
+
+
+@app.get("/gpu-status")
+async def gpu_status():
+    health = await ollama_manager.health_check_all()
+    gpus: list[dict[str, object]] = []
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        count = pynvml.nvmlDeviceGetCount()
+        for idx in range(count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+            name = pynvml.nvmlDeviceGetName(handle)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            gpus.append({
+                "index": idx,
+                "name": name,
+                "memory": f"{mem.used // (1024 * 1024)}/{mem.total // (1024 * 1024)} MB",
+                "utilization": util.gpu,
+            })
+        pynvml.nvmlShutdown()
+    except Exception as exc:
+        gpus = [{"index": -1, "name": "unavailable", "memory": "0/0 MB", "utilization": 0, "error": str(exc)}]
+    return {"driver": "580.159.03", "gpus": gpus}
+
+
+@app.get("/ollama-status")
+async def ollama_status():
+    health = await ollama_manager.health_check_all()
+    lanes = [
+        {"name": "default", "port": 11434, "healthy": bool(health.get("default")), "memory": "16 GB"},
+        {"name": "v100", "port": 11437, "healthy": bool(health.get("v100")), "memory": "16 GB"},
+        {"name": "p40", "port": 11435, "healthy": bool(health.get("p40")), "memory": "24 GB"},
+        {"name": "3060", "port": 11436, "healthy": bool(health.get("3060")), "memory": "12 GB"},
+    ]
+    instances = []
+    for lane in lanes:
+        models = 0
+        try:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{lane['port']}", timeout=10) as client:
+                r = await client.get("/api/tags")
+                if r.status_code == 200:
+                    models = len(r.json().get("models", []))
+        except Exception:
+            pass
+        instances.append({**lane, "models": models})
+    return {"instances": instances}
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    request.state.start_time = time.time()
+    response = await call_next(request)
+    return response
+
+
+@app.get("/health")
+async def health():
+    healthy = await ollama_manager.health_check_all()
+    return {"status": "ok", "ollama_instances": {name: bool(status) for name, status in healthy.items()}}
+
+
+@app.get("/v1/models")
+async def list_models(user=None):
+    return []
+
+
+@app.post("/v1/chat/completions")
+async def chat_completions(request: Request, user=None):
+    return JSONResponse(status_code=501, content={"detail": "not implemented yet"})
+
+
+@app.post("/v1/completions")
+async def completions(request: Request, user=None):
+    return JSONResponse(status_code=501, content={"detail": "not implemented yet"})
+
+
+@app.post("/v1/embeddings")
+async def embeddings(request: Request, user=None):
+    return JSONResponse(status_code=501, content={"detail": "not implemented yet"})
+
+
+@app.post("/api/generate")
+async def generate(request: GenerateRequest):
+    """Queue a generation job to ComfyUI"""
+    try:
+        prompt = request.prompt
+        workflow = request.workflow.value
+        mode = request.mode.value
+
+        # Forward to ComfyUI
+        async with httpx.AsyncClient(timeout=30) as client:
+            comfy_prompt = build_comfyui_prompt(prompt, workflow, mode)
+            response = await client.post(
+                "http://localhost:8188/prompt",
+                json={"prompt": comfy_prompt}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "prompt_id": data.get("prompt_id"),
+                    "message": "Queued to ComfyUI"
+                }
+            else:
+                return JSONResponse(
+                    status_code=502,
+                    content={"detail": f"ComfyUI error: {response.text}"}
+                )
+    except Exception as e:
+        logger.error("generate_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/improve-prompt")
+async def improve_prompt(request: ImprovePromptRequest):
+    """Use LLM to improve a prompt"""
+    try:
+        prompt = request.prompt
+        mode = request.mode.value
+
+        if not prompt:
+            return JSONResponse(status_code=400, content={"detail": "Prompt required"})
+
+        system_prompts = {
+            "cinematic": "You are a cinematic prompt engineer. Enhance the prompt with camera angles, lighting, composition, color grading, and technical details. Return ONLY the improved prompt.",
+            "realistic-photo": "You are a photography prompt engineer. Enhance with camera settings, lens, lighting, film stock, and photorealistic details. Return ONLY the improved prompt.",
+            "private-adult-fiction": "You are an adult fiction prompt writer. Enhance with sensory details, atmosphere, and narrative depth. Return ONLY the improved prompt.",
+            "fashion": "You are a fashion photography prompt engineer. Enhance with styling, runway/editorial context, lighting, and composition. Return ONLY the improved prompt.",
+            "fitness": "You are a fitness photography prompt engineer. Enhance with athletic form, gym/studio lighting, dynamic poses, and motivational atmosphere. Return ONLY the improved prompt.",
+            "office-professional": "You are a corporate photography prompt engineer. Enhance with professional lighting, clean composition, modern office aesthetics. Return ONLY the improved prompt.",
+            "anime": "You are an anime art prompt engineer. Enhance with style references, character design, cel shading, and studio references. Return ONLY the improved prompt.",
+            "product-shot": "You are a product photography prompt engineer. Enhance with studio lighting, background, materials, and commercial appeal. Return ONLY the improved prompt."
+        }
+
+        system = system_prompts.get(mode, system_prompts["cinematic"])
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                "http://localhost:11436/api/chat",
+                json={
+                    "model": "hermes3",
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0.7, "num_predict": 500}
+                }
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                improved = data.get("message", {}).get("content", "").strip()
+                return {"improved_prompt": improved or prompt}
+            else:
+                return {"improved_prompt": prompt}
+    except Exception as e:
+        logger.error("improve_prompt_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/upscale")
+async def upscale_latest(request: UpscaleRequest):
+    """Upscale an image"""
+    try:
+        import os, glob
+        output_dir = request.image_path if os.path.isabs(request.image_path) else f"/home/scott/ai-lab/image/outputs/{request.image_path}"
+        if not os.path.exists(output_dir):
+            return JSONResponse(status_code=404, content={"detail": "Image not found"})
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            upscale_prompt = build_upscale_prompt(request.image_path)
+            response = await client.post(
+                "http://localhost:8188/prompt",
+                json={"prompt": upscale_prompt}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return {"success": True, "prompt_id": data.get("prompt_id"), "source": request.image_path}
+            else:
+                return JSONResponse(status_code=502, content={"detail": "ComfyUI upscale failed"})
+    except Exception as e:
+        logger.error("upscale_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/variations")
+async def generate_variations(request: VariationsRequest):
+    """Generate variations of an image"""
+    try:
+        import os, glob
+        output_dir = request.image_path if os.path.isabs(request.image_path) else f"/home/scott/ai-lab/image/outputs/{request.image_path}"
+        if not os.path.exists(output_dir):
+            return JSONResponse(status_code=404, content={"detail": "Image not found"})
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            var_prompt = build_variations_prompt(request.image_path)
+            response = await client.post(
+                "http://localhost:8188/prompt",
+                json={"prompt": var_prompt}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return {"success": True, "prompt_id": data.get("prompt_id"), "source": request.image_path}
+            else:
+                return JSONResponse(status_code=502, content={"detail": "ComfyUI variations failed"})
+    except Exception as e:
+        logger.error("variations_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/cleanup")
+async def cleanup_outputs(days: int = 30):
+    """Clean outputs older than specified days"""
+    try:
+        import os, glob, time
+        output_dir = "/home/scott/ai-lab/image/outputs"
+        cutoff = time.time() - (days * 86400)
+
+        files = glob.glob(os.path.join(output_dir, "*"))
+        removed = 0
+        for f in files:
+            if os.path.getmtime(f) < cutoff:
+                os.remove(f)
+                removed += 1
+
+        return {"success": True, "removed": removed, "message": f"Cleaned {removed} files older than {days} days"}
+    except Exception as e:
+        logger.error("cleanup_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/backup")
+async def backup_workflows():
+    """Backup ComfyUI workflows"""
+    try:
+        import subprocess, os
+        backup_dir = "/home/scott/ai-lab/backups"
+        os.makedirs(backup_dir, exist_ok=True)
+
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_file = os.path.join(backup_dir, f"workflows-{timestamp}.tar.zst")
+
+        result = subprocess.run(
+            ["tar", "-C", "/home/scott/ai-lab", "-cf", "-", "image/workflows"],
+            stdout=subprocess.PIPE
+        )
+
+        if result.returncode == 0:
+            import zstandard as zstd
+            cctx = zstd.ZstdCompressor(level=3)
+            compressed = cctx.compress(result.stdout)
+            with open(backup_file, "wb") as f:
+                f.write(compressed)
+
+            return {"success": True, "file": backup_file, "size": len(compressed)}
+        else:
+            return JSONResponse(status_code=500, content={"detail": "Backup failed"})
+    except Exception as e:
+        logger.error("backup_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.get("/api/report")
+async def daily_report():
+    """Generate daily workstation report"""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["/home/scott/ai-lab/scripts/bin/ai-lab-report.sh", "today"],
+            capture_output=True, text=True, timeout=30
+        )
+        return result.stdout or "Report generation produced no output"
+    except Exception as e:
+        logger.error("report_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@app.post("/api/heal")
+async def self_heal():
+    """Run self-heal checks"""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["/home/scott/ai-lab/scripts/bin/ai-heal.sh"],
+            capture_output=True, text=True, timeout=60
+        )
+        return {"success": True, "output": result.stdout, "stderr": result.stderr}
+    except Exception as e:
+        logger.error("heal_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+# WebSocket endpoint for real-time updates
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            health = await ollama_manager.health_check_all()
+            gpu_data = []
+            try:
+                import pynvml
+                pynvml.nvmlInit()
+                count = pynvml.nvmlDeviceGetCount()
+                for idx in range(count):
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
+                    name = pynvml.nvmlDeviceGetName(handle)
+                    mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    gpu_data.append({
+                        "index": idx,
+                        "name": name,
+                        "memory": f"{mem.used // (1024*1024)}/{mem.total // (1024*1024)} MB",
+                        "utilization": util.gpu
+                    })
+                pynvml.nvmlShutdown()
+            except:
+                pass
+
+            await websocket.send_json({
+                "type": "status",
+                "services": {k: v for k, v in health.items()},
+                "gpu": gpu_data,
+                "ollama": health,
+                "timestamp": time.time()
+            })
+
+            await asyncio.sleep(10)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error("ws_error", error=str(e))
+
+
+def build_comfyui_prompt(prompt: str, workflow: str, mode: str) -> dict:
+    base_prompt = {
+        "3": {"inputs": {"seed": int(time.time() * 1000) % 1000000, "steps": 20, "cfg": 7, "sampler_name": "euler", "scheduler": "normal", "denoise": 1, "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}, "class_type": "KSampler"},
+        "4": {"inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"}, "class_type": "CheckpointLoaderSimple"},
+        "5": {"inputs": {"width": 1024, "height": 1024, "batch_size": 1}, "class_type": "EmptyLatentImage"},
+        "6": {"inputs": {"text": prompt, "clip": ["4", 1]}, "class_type": "CLIPTextEncode"},
+        "7": {"inputs": {"text": "low quality, blurry, distorted", "clip": ["4", 1]}, "class_type": "CLIPTextEncode"},
+        "8": {"inputs": {"samples": ["3", 0], "vae": ["4", 2]}, "class_type": "VAEDecode"},
+        "9": {"inputs": {"filename_prefix": "ai_lab", "images": ["8", 0]}, "class_type": "SaveImage"}
+    }
+    return base_prompt
+
+
+def build_upscale_prompt(image_path: str) -> dict:
+    return {
+        "1": {"inputs": {"image": os.path.basename(image_path)}, "class_type": "LoadImage"},
+        "2": {"inputs": {"model_name": "4x-UltraSharp.pth"}, "class_type": "UpscaleModelLoader"},
+        "3": {"inputs": {"upscale_model": ["2", 0], "image": ["1", 0]}, "class_type": "ImageUpscaleWithModel"},
+        "4": {"inputs": {"filename_prefix": "ai_lab_upscale", "images": ["3", 0]}, "class_type": "SaveImage"}
+    }
+
+
+def build_variations_prompt(image_path: str) -> dict:
+    return {
+        "1": {"inputs": {"image": os.path.basename(image_path)}, "class_type": "LoadImage"},
+        "2": {"inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"}, "class_type": "CheckpointLoaderSimple"},
+        "3": {"inputs": {"image": ["1", 0]}, "class_type": "VAEEncode"},
+        "4": {"inputs": {"noise_mask": ["3", 0]}, "class_type": "KSampler"},
+        "5": {"inputs": {"samples": ["4", 0], "vae": ["2", 2]}, "class_type": "VAEDecode"},
+        "6": {"inputs": {"filename_prefix": "ai_lab_var", "images": ["5", 0]}, "class_type": "SaveImage"}
+    }
+
+
+# ========================================
+# COMFYUI MANAGEMENT ENDPOINTS
+# ========================================
+
+@app.get("/api/comfy/models")
+async def list_comfy_models():
+    models = await comfyui_service.scan_model_directories()
+    return {"models": models}
+
+
+@app.get("/api/comfy/nodes")
+async def list_comfy_nodes():
+    nodes = await comfyui_service.list_custom_nodes()
+    return {"nodes": nodes}
+
+
+@app.post("/api/comfy/download")
+async def download_model(request: ModelDownloadRequest):
+    result = await comfyui_service.download_model(str(request.url), request.type.value, request.target_folder)
+    return {"success": True, "model": result}
+
+
+@app.post("/api/comfy/install-node")
+async def install_custom_node(repo: str):
+    result = await comfyui_service.install_custom_node(repo)
+    return result
+
+
+@app.get("/api/comfy/workflows")
+async def list_workflows():
+    workflows = await comfyui_service.list_workflows()
+    return {"workflows": workflows}
+
+
+@app.get("/api/comfy/workflows/{workflow_id}")
+async def get_workflow(workflow_id: str):
+    workflow = await comfyui_service.get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return workflow
+
+
+@app.post("/api/comfy/workflows")
+async def create_workflow(workflow: WorkflowCreate):
+    workflow_id = await comfyui_service.save_workflow(workflow.dict())
+    return {"success": True, "workflow_id": workflow_id}
+
+
+@app.put("/api/comfy/workflows/{workflow_id}")
+async def update_workflow(workflow_id: str, workflow: WorkflowUpdate):
+    existing = await comfyui_service.get_workflow(workflow_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    update_data = workflow.dict(exclude_unset=True)
+    existing.update(update_data)
+    existing["updated"] = int(time.time())
+    await comfyui_service.save_workflow(existing)
+    return {"success": True}
+
+
+@app.delete("/api/comfy/workflows/{workflow_id}")
+async def delete_workflow(workflow_id: str):
+    success = await comfyui_service.delete_workflow(workflow_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {"success": True}
+
+
+@app.post("/api/comfy/workflows/{workflow_id}/queue")
+async def queue_workflow(workflow_id: str):
+    workflow = await comfyui_service.get_workflow(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    result = await comfyui_service.queue_workflow(workflow)
+    return {"success": True, "prompt_id": result.get("prompt_id")}
+
+
+@app.get("/api/comfy/queue")
+async def get_comfy_queue():
+    queue = await comfyui_service.get_queue()
+    return queue
+
+
+# GPU MANAGEMENT
+@app.get("/api/gpu/{gpu_index}/processes")
+async def get_gpu_processes(gpu_index: int):
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
+        compute_procs = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+
+        processes = []
+        for proc in compute_procs:
+            try:
+                import psutil
+                p = psutil.Process(proc.pid)
+                processes.append({
+                    "pid": proc.pid,
+                    "name": p.name(),
+                    "vram": proc.usedGpuMemory // (1024 * 1024),
+                    "type": "compute",
+                })
+            except:
+                processes.append({
+                    "pid": proc.pid,
+                    "name": "unknown",
+                    "vram": proc.usedGpuMemory // (1024 * 1024),
+                    "type": "compute",
+                })
+
+        pynvml.nvmlShutdown()
+        return {"processes": processes}
+    except Exception as e:
+        logger.error(f"Failed to get GPU processes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/gpu/{gpu_index}/kill-all")
+async def kill_gpu_processes(gpu_index: int):
+    try:
+        import pynvml
+        import psutil
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
+
+        for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+            try:
+                psutil.Process(proc.pid).terminate()
+            except:
+                pass
+
+        for proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(handle):
+            try:
+                psutil.Process(proc.pid).terminate()
+            except:
+                pass
+
+        pynvml.nvmlShutdown()
+        return {"success": True, "message": f"All processes on GPU {gpu_index} terminated"}
+    except Exception as e:
+        logger.error(f"Failed to kill GPU processes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/process/{pid}/kill")
+async def kill_process(pid: int):
+    try:
+        import psutil
+        psutil.Process(pid).terminate()
+        return {"success": True, "message": f"Process {pid} terminated"}
+    except psutil.NoSuchProcess:
+        raise HTTPException(status_code=404, detail="Process not found")
+    except Exception as e:
+        logger.error(f"Failed to kill process: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# SECURITY ENDPOINTS
+@app.post("/api/security/scan")
+async def security_scan(request: SecurityScanRequest):
+    threats = security_service.scan_text(request.text, source="api_scan")
+    return {"threats": threats, "count": len(threats)}
+
+
+@app.post("/api/security/scan-prompt")
+async def scan_prompt(request: ImprovePromptRequest):
+    threats = security_service.scan_prompt(request.prompt, "prompt-improve")
+    return {"threats": threats, "count": len(threats), "safe": len(threats) == 0}
+
+
+@app.get("/api/security/stats")
+async def security_stats():
+    return security_service.get_threat_stats()
+
+
+@app.get("/api/security/threats")
+async def get_threats(limit: int = 100, since: Optional[int] = None):
+    threats = security_service.get_threats(limit=limit, since=since)
+    return {"threats": threats}
+
+
+@app.get("/api/security/audit")
+async def get_audit_logs(limit: int = 100, since: Optional[int] = None, level: Optional[str] = None):
+    logs = security_service.get_audit_logs(limit=limit, since=since, level=level)
+    return {"logs": logs}
+
+
+@app.post("/api/security/block-ip")
+async def block_ip(ip: str, reason: str = "Security threat"):
+    security_service.block_ip(ip, reason)
+    return {"success": True, "message": f"IP {ip} blocked"}
+
+
+@app.post("/api/security/unblock-ip")
+async def unblock_ip(ip: str):
+    security_service.unblock_ip(ip)
+    return {"success": True, "message": f"IP {ip} unblocked"}
+
+
+@app.post("/api/security/rotate-keys")
+async def rotate_api_keys():
+    new_key = security_service.generate_api_key()
+    return {"success": True, "new_key": new_key}
+
+
+# OLLAMA MODEL MANAGEMENT
+@app.get("/api/ollama/{port}/models")
+async def list_ollama_models(port: int):
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"http://localhost:{port}/api/tags")
+        resp.raise_for_status()
+        return {"models": resp.json().get("models", [])}
+
+
+@app.post("/api/ollama/{port}/pull")
+async def pull_ollama_model(port: int, model: str):
+    async with httpx.AsyncClient(timeout=300) as client:
+        resp = await client.post(f"http://localhost:{port}/api/pull", json={"name": model})
+        resp.raise_for_status()
+        return {"success": True}
+
+
+@app.delete("/api/ollama/{port}/models/{model_name}")
+async def delete_ollama_model(port: int, model_name: str):
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.request("DELETE", f"http://localhost:{port}/api/delete", json={"name": model_name})
+        resp.raise_for_status()
+        return {"success": True}
+
+
+# BATCH GENERATION
+@app.post("/api/batch-generate")
+async def batch_generate(request: BatchGenerateRequest):
+    prompt_ids = []
+    for i in range(request.count):
+        varied_prompt = f"{request.base_prompt} --variation {i+1} --strength {request.variation_strength}"
+        try:
+            result = await generate(GenerateRequest(
+                prompt=varied_prompt,
+                workflow=request.workflow,
+                mode=request.mode
+            ))
+            if isinstance(result, dict) and result.get("prompt_id"):
+                prompt_ids.append(result["prompt_id"])
+        except Exception as e:
+            logger.error(f"Batch generation failed for item {i}: {e}")
+        await asyncio.sleep(0.5)
+
+    return {"success": True, "prompt_ids": prompt_ids, "count": len(prompt_ids)}
+
+
+# FILE UPLOAD
+@app.post("/api/upload")
+async def upload_files(files: List[UploadFile] = File(...)):
+    uploaded = []
+    upload_dir = Path("/home/scott/ai-lab/image/inputs")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    for file in files:
+        allowed_ext = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".json", ".txt", ".md", ".safetensors", ".pt", ".bin"}
+        ext = Path(file.filename).suffix.lower()
+        if ext not in allowed_ext:
+            continue
+
+        safe_name = f"{int(time.time())}_{file.filename}"
+        target_path = upload_dir / safe_name
+
+        content = await file.read()
+        if len(content) > 50 * 1024 * 1024:
+            continue
+
+        with open(target_path, "wb") as f:
+            f.write(content)
+
+        uploaded.append({
+            "filename": safe_name,
+            "original_name": file.filename,
+            "size": len(content),
+            "path": str(target_path),
+        })
+
+    return {"uploaded": uploaded, "count": len(uploaded)}
+
+
+# AUTH ENDPOINTS
+from app.middleware.auth import create_access_token, create_refresh_token, verify_refresh_token
+
+@app.post("/api/auth/login")
+async def login(username: str = Form(...), password: str = Form(...)):
+    access_token = create_access_token({"sub": username, "permissions": ["read", "write", "admin"]})
+    refresh_token = create_refresh_token({"sub": username})
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+@app.post("/api/auth/refresh")
+async def refresh_token(refresh_token: str = Form(...)):
+    try:
+        payload = verify_refresh_token(refresh_token)
+        access_token = create_access_token({"sub": payload["sub"], "permissions": ["read", "write", "admin"]})
+        return {"access_token": access_token, "token_type": "bearer"}
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+
+@app.get("/api/auth/me")
+async def get_current_user_info(user: dict = Depends(get_current_user_optional)):
+    return user or {"authenticated": False}
+
+
+# HEALTH/READINESS
+@app.get("/ready")
+async def readiness():
+    checks = {
+        "ollama_v100": False,
+        "ollama_p40": False,
+        "ollama_3060": False,
+        "comfyui": False,
+    }
+
+    try:
+        health = await ollama_manager.health_check_all()
+        checks["ollama_v100"] = health.get("v100", False)
+        checks["ollama_p40"] = health.get("p40", False)
+        checks["ollama_3060"] = health.get("3060", False)
+    except:
+        pass
+
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            resp = await client.get("http://localhost:8188/system_stats")
+            checks["comfyui"] = resp.status_code == 200
+    except:
+        pass
+
+    healthy = all(checks.values())
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content={"ready": healthy, "checks": checks}
+    )
+
+
+@app.get("/live")
+async def liveness():
+    return {"alive": True, "timestamp": time.time()}
+
+
+# METRICS/ADMIN
+@app.get("/admin/metrics")
+async def admin_metrics():
+    import psutil
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=0.1),
+        "memory_percent": psutil.virtual_memory().percent,
+        "disk_percent": psutil.disk_usage("/").percent,
+        "uptime": time.time() - psutil.boot_time(),
+        "processes": len(psutil.pids()),
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
