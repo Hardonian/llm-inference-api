@@ -1,42 +1,39 @@
-CREATE TABLE IF NOT EXISTS audits (
+CREATE TABLE IF NOT EXISTS models (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_name TEXT NOT NULL,
-    repo_url TEXT,
-    audited_at TEXT NOT NULL,
-    overall_score REAL,
-    critical_findings INTEGER DEFAULT 0,
-    high_findings INTEGER DEFAULT 0,
-    medium_findings INTEGER DEFAULT 0,
-    total_findings INTEGER DEFAULT 0,
-    report_json TEXT,
-    status TEXT DEFAULT 'pending',
+    name TEXT NOT NULL UNIQUE,
+    provider TEXT,
+    context_length INTEGER,
+    max_tokens INTEGER,
+    is_active INTEGER DEFAULT 1,
+    lane TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS findings (
+CREATE TABLE IF NOT EXISTS inference_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    audit_id INTEGER NOT NULL,
-    category TEXT NOT NULL,
-    severity TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT,
-    recommendation TEXT,
-    resource_type TEXT,
-    resource_name TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    model TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    max_tokens INTEGER DEFAULT 512,
+    temperature REAL DEFAULT 0.7,
+    lane TEXT,
+    status TEXT DEFAULT 'queued',
+    tokens_input INTEGER DEFAULT 0,
+    tokens_output INTEGER DEFAULT 0,
+    latency_ms INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS reports (
+CREATE TABLE IF NOT EXISTS lane_status (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    audit_id INTEGER NOT NULL,
-    format TEXT DEFAULT 'markdown',
-    content TEXT,
-    delivered_via TEXT,
-    delivered_at TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    lane_name TEXT NOT NULL,
+    gpu_type TEXT,
+    gpu_index INTEGER,
+    status TEXT DEFAULT 'available',
+    current_model TEXT,
+    queue_depth INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audits(workspace_name);
-CREATE INDEX IF NOT EXISTS idx_audit_status ON audits(status);
-CREATE INDEX IF NOT EXISTS idx_finding_audit ON findings(audit_id);
-CREATE INDEX IF NOT EXISTS idx_finding_severity ON findings(severity);
+CREATE INDEX IF NOT EXISTS idx_req_status ON inference_requests(status);
+CREATE INDEX IF NOT EXISTS idx_req_model ON inference_requests(model);

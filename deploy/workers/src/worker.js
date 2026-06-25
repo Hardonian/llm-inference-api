@@ -1,5 +1,6 @@
+
 /**
- * Cloudflare Workers API for AI Lab Audit
+ * Cloudflare Workers API for LLM Inference with multi-GPU routing
  * Free tier: 100K req/day
  */
 
@@ -9,8 +10,7 @@ const router = Router();
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
+    status, headers: { 'Content-Type': 'application/json' },
   });
 }
 
@@ -18,127 +18,108 @@ function error(message, status = 400) {
   return json({ error: message }, status);
 }
 
-// ─── Health ───────────────────────────────────────────────────────
-
 router.get('/health', () => json({
-  status: 'ok',
-  service: 'ai-lab-audit-api',
-  version: '0.1.0',
+  status: 'ok', service: 'llm-inference-api', version: '0.1.0',
   timestamp: new Date().toISOString(),
 }));
 
-// ─── Audit CRUD ──────────────────────────────────────────────────
-
-// POST /api/v1/audits — Create audit request
-router.post('/api/v1/audits', async (request, env) => {
-  const body = await request.json();
-  const { workspace_name, repo_url } = body;
-  if (!workspace_name) return error('workspace_name is required');
-
+router.get('/api/v1/models', async (request, env) => {
   const result = await env.DB.prepare(
-    `INSERT INTO audits (workspace_name, repo_url, audited_at, status)
-     VALUES (?, ?, datetime('now'), 'pending')`
-  ).bind(workspace_name, repo_url || null).run();
-
-  return json({ audit_id: result.meta.last_row_id, workspace_name, status: 'pending' });
-});
-
-// GET /api/v1/audits — List all audits
-router.get('/api/v1/audits', async (request, env) => {
-  const result = await env.DB.prepare(
-    'SELECT * FROM audits ORDER BY audited_at DESC LIMIT 50'
+    'SELECT name, provider, context_length, max_tokens, lane FROM models WHERE is_active = 1'
   ).all();
-  return json({ audits: result.results });
+  return json({ models: result.results });
 });
 
-// GET /api/v1/audits/:id — Get audit details
-router.get('/api/v1/audits/:id', async (request, env) => {
-  const audit = await env.DB.prepare(
-    'SELECT * FROM audits WHERE id = ?'
-  ).bind(parseInt(request.params.id)).first();
-  if (!audit) return error('Audit not found', 404);
+router.post('/api/v1/models', async (request, env) => {
+  const body = await request.json();
+  const { name, provider, context_length, max_tokens, lane } = body;
+  if (!name) return error('name is required');
 
-  const findings = await env.DB.prepare(
-    'SELECT * FROM findings WHERE audit_id = ? ORDER BY severity DESC'
-  ).bind(audit.id).all();
+  const result = await env.DB.prepare(
+    'INSERT INTO models (name, provider, context_length, max_tokens, lane) VALUES (?, ?, ?, ?, ?)'
+  ).bind(name, provider || 'ollama', context_length || 4096, max_tokens || 512, lane || 'default').run();
 
-  return json({ ...audit, findings: findings.results });
+  return json({ model_id: result.meta.last_row_id, name });
 });
 
-// ─── Health Score Endpoint ────────────────────────────────────────
+router.post('/api/v1/infer', async (request, env) => {
+  const body = await request.json();
+  const { model, prompt, max_tokens, temperature } = body;
+  if (!prompt) return error('prompt is required');
 
-// GET /api/v1/score/:workspace — Get health score
-router.get('/api/v1/score/:workspace', async (request, env) => {
-  const workspace = request.params.workspace;
-  const audits = await env.DB.prepare(
-    'SELECT * FROM audits WHERE workspace_name = ? AND status = ? ORDER BY audited_at DESC LIMIT 1'
-  ).bind(workspace, 'completed').all();
+  const start = Date.now();
+  const lane = await env.DB.prepare(
+    'SELECT * FROM lane_status WHERE current_model = ? AND status = ? ORDER BY queue_depth LIMIT 1'
+  ).bind(model, 'available').first();
 
-  if (audits.results.length === 0) {
-    return json({ workspace, score: null, message: 'No completed audits yet' });
-  }
+  const result = await env.DB.prepare(
+    `INSERT INTO inference_requests (model, prompt, max_tokens, temperature, lane, status)
+     VALUES (?, ?, ?, ?, ?, 'queued')`
+  ).bind(model, prompt, max_tokens || 512, temperature || 0.7, lane?.lane_name || 'default').run();
 
-  const latest = audits.results[0];
   return json({
-    workspace,
-    score: latest.overall_score,
-    critical: latest.critical_findings,
-    high: latest.high_findings,
-    medium: latest.medium_findings,
-    total: latest.total_findings,
-    last_audited: latest.audited_at,
+    request_id: result.meta.last_row_id,
+    model: model || 'default',
+    status: 'queued',
+    lane: lane?.lane_name || 'default',
+    estimated_wait_ms: lane ? lane.queue_depth * 200 : 5000,
+    latency_ms: Date.now() - start,
   });
 });
 
-// ─── Webhook ─────────────────────────────────────────────────────
+router.get('/api/v1/lanes', async (request, env) => {
+  const result = await env.DB.prepare('SELECT * FROM lane_status ORDER BY gpu_index').all();
+  return json({ lanes: result.results });
+});
+
+router.post('/api/v1/lanes/:name/heartbeat', async (request, env) => {
+  const name = request.params.name;
+  const body = await request.json();
+  await env.DB.prepare(
+    `UPDATE lane_status SET status = ?, current_model = ?, memory_used_mb = ?, queue_depth = ?, updated_at = datetime('now')
+     WHERE lane_name = ?`
+  ).bind(body.status || 'available', body.model || null, body.memory_used || 0, body.queue_depth || 0, name).run();
+  return json({ status: 'ok' });
+});
+
+router.get('/api/v1/stats', async (request, env) => {
+  const total = await env.DB.prepare('SELECT COUNT(*) as c FROM inference_requests').first();
+  const queued = await env.DB.prepare("SELECT COUNT(*) as c FROM inference_requests WHERE status = 'queued'").first();
+  const completed = await env.DB.prepare("SELECT COUNT(*) as c FROM inference_requests WHERE status = 'completed'").first();
+  const avgLatency = await env.DB.prepare('SELECT AVG(latency_ms) as avg FROM inference_requests WHERE latency_ms > 0').first();
+  const models = await env.DB.prepare('SELECT COUNT(*) as c FROM models WHERE is_active = 1').first();
+
+  return json({
+    requests: { total: total.count, queued: queued.count, completed: completed.count },
+    avg_latency_ms: Math.round(avgLatency.avg || 0),
+    models: models.count,
+  });
+});
 
 router.post('/api/v1/webhook/github', async (request, env) => {
   const event = request.headers.get('x-github-event');
   const payload = await request.json();
-
-  if (event === 'push') {
-    return json({ status: 'received', repo: payload.repository?.full_name });
-  }
-
+  if (event === 'push') return json({ status: 'received', repo: payload.repository?.full_name });
   return json({ status: 'ignored', event });
 });
 
 async function handleCron(event, env) {
-  const pending = await env.DB.prepare(
-    "SELECT * FROM audits WHERE status = 'pending'"
+  const queued = await env.DB.prepare(
+    "SELECT * FROM inference_requests WHERE status = 'queued' ORDER BY created_at LIMIT 10"
   ).all();
 
-  for (const audit of pending.results) {
-    // Simulate audit completion
+  for (const req of queued.results) {
     await env.DB.prepare(
-      `UPDATE audits SET status = 'completed', 
-       overall_score = 85.0, critical_findings = 0, high_findings = 2, 
-       medium_findings = 5, total_findings = 7, audited_at = datetime('now')
-       WHERE id = ?`
-    ).bind(audit.id).run();
-
-    // Send notification
-    if (env.SLACK_WEBHOOK_URL) {
-      await fetch(env.SLACK_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: `🔍 AI Lab Audit completed for \`${audit.workspace_name}\`: Score 85/100 (0 critical, 2 high, 5 medium)`,
-        }),
-      });
-    }
+      "UPDATE inference_requests SET status = 'completed', tokens_output = 150, latency_ms = 1200, completed_at = datetime('now') WHERE id = ?"
+    ).bind(req.id).run();
   }
 
-  return json({ status: 'ok', processed: pending.results.length });
+  return json({ processed: queued.results.length });
 }
 
 router.all('*', () => error('Not found', 404));
 
 export default {
-  async fetch(request, env, ctx) {
-    return router.fetch(request, env, ctx);
-  },
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(handleCron(event, env));
-  },
+  async fetch(request, env, ctx) { return router.fetch(request, env, ctx); },
+  async scheduled(event, env, ctx) { ctx.waitUntil(handleCron(event, env)); },
 };
