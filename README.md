@@ -1,98 +1,93 @@
-# AI Lab Command Center Dashboard
+# LLM Inference API
 
-Local-first FastAPI dashboard for AI workstations: Ollama lanes, ComfyUI, GPU monitoring, prompt studio, disk rescue, self-heal, money paths, and operator powerups.
+> Production-ready **local LLM inference gateway** — OpenAI-compatible endpoints,
+> multi-GPU routing, load balancing, auth, and usage metering for your own
+> Ollama / ComfyUI stack.
 
-[![Tests](https://github.com/scott/llm-inference-api/actions/workflows/tests.yml/badge.svg)](https://github.com/scott/llm-inference-api/actions/workflows/tests.yml)
-[![Deploy](https://github.com/scott/llm-inference-api/actions/workflows/deploy.yml/badge.svg)](https://github.com/scott/llm-inference-api/actions/workflows/deploy.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue?logo=python)](https://www.python.org/)
+[![Status: Active](https://img.shields.io/badge/status-active-orange)]()
+[![Local-first](https://img.shields.io/badge/deployment-local--first-2ea043)]()
 
-## Run
+---
+
+## Why
+
+You have GPUs and models. Wiring them into a stable, authenticated,
+OpenAI-compatible API for your apps and agents is the tedious part. This service
+is that wiring: one endpoint, routed across your hardware, with auth, rate
+limits, and per-key usage tracking.
+
+## What it does
+
+- **OpenAI-compatible** `/v1/chat/completions`, `/v1/completions`, `/v1/models`
+- **Multi-GPU routing** — balances Ollama lanes (vision / mid / large) and ComfyUI
+- **Auth** — bearer-token auth with public-path allowlist
+- **Rate limiting** + **security headers** (defense-in-depth)
+- **Prometheus metrics** (`/metrics`) for utilization and token throughput
+- **Usage metering** — per-key token accounting for cost visibility
+- **Local-first** — nothing leaves your network; runs as a systemd user service
+
+## Quick start
 
 ```bash
-systemctl --user status ai-lab-dashboard.service --no-pager
+# 0. Prereqs: Python 3.11+, an Ollama (and/or ComfyUI) endpoint on the LAN
+git clone https://github.com/Hardonian/llm-inference-api.git
+cd llm-inference-api
+
+# 1. Install
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# 2. Configure
+cp .env.example .env      # point OLLAMA_BASE_URL / COMFYUI at your workers
+
+# 3. Run
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+#  or via the bundled launcher:
+python main.py
+
+# 4. Health + first call
+curl http://127.0.0.1:8000/health
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/v1/models
 ```
 
-Open: http://127.0.0.1:8000/dashboard
+### systemd (recommended for always-on)
 
-Control:
 ```bash
-./scripts/dashboardctl.sh status   # Service health
-./scripts/dashboardctl.sh health    # HTTP smoke
-./scripts/dashboardctl.sh smoke     # Browser automation
-./scripts/dashboardctl.sh restart   # Restart service
-./scripts/dashboardctl.sh logs 160  # Tail logs
+systemctl --user status llm-inference-api.service --no-pager
+# bundled helper:
+./scripts/dashboardctl.sh status    # health + smoke
+./scripts/dashboardctl.sh restart
 ```
 
-## Install (60 seconds)
+## Endpoints
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/scott/llm-inference-api/main/scripts/install.sh | bash
-```
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | public | Health check (JSON) |
+| `/metrics` | GET | public | Prometheus metrics |
+| `/v1/models` | GET | bearer | List routed models |
+| `/v1/chat/completions` | POST | bearer | Chat completions (OpenAI-compatible) |
+| `/v1/completions` | POST | bearer | Text completions |
+| `/dashboard` | GET | bearer | Local operator console |
 
-Demo mode (fake GPU/services data for prospects):
-```bash
-./scripts/install.sh --demo
-```
+## Configuration
 
-## Product Offer
+Key variables (see `.env.example`):
 
-Private AI Lab Command Center
-
-| Option | Price | What |
-|--------|-------|------|
-| Lifetime | $297 | Full source, unlimited use, 1hr setup call |
-| Managed | $29/mo | Lifetime + weekly health checks + webhook alerts |
-| Team | $997/mo | Up to 10 users + SSO/OIDC + custom integrations |
-
-## Key Features
-
-| Category | Feature |
+| Variable | Purpose |
 |----------|---------|
-| **Monitoring** | GPU temps/util/VRAM, Ollama lane health, disk pressure forecasting |
-| **Generation** | Prompt Studio (8 modes), batch, upscale, variations, ComfyUI workflow runner |
-| **Control** | Self-heal, disk rescue, model deduplication, process manager |
-| **Revenue** | Money paths scanner, workflow pack exporter (tar.gz), export reports |
-| **UX** | Ctrl+K command palette, dark/light theme, mobile responsive |
+| `OLLAMA_BASE_URL` | Upstream Ollama base URL |
+| `COMFYUI_BASE_URL` | Upstream ComfyUI base URL |
+| `API_TOKEN` | Bearer token for protected routes |
+| `PUBLIC_PATHS` | Comma-separated paths open without auth |
 
-## Architecture
+## Part of the Hardonia stack
 
-```
-llm-inference-api/
-├── app/
-│   ├── main.py          # FastAPI endpoints (280+)
-│   ├── middleware/      # auth, security, rate-limit
-│   ├── services/        # ollama, comfyui, usage
-│   └── templates/       # dashboard.html, landing.html
-├── scripts/
-│   ├── install.sh       # One-command install
-│   ├── dashboardctl.sh  # Operator control
-│   └── screenshot-gallery.js  # Landing page screenshots
-└── tests/               # 36 tests passing
-```
+LLM Inference API is one of the [Hardonia](https://github.com/Hardonian)
+local-first AI infrastructure projects — measurable value, operator-grade
+control, and zero theatre.
 
-## Safety
+## License
 
-- Binds to 127.0.0.1 (local only)
-- Revenue/prediction/export endpoints require Bearer token
-- Disk cleanup restricted to user-owned paths
-- No cloud dependency required
-
-## Gateways
-
-| Gate | Score | Status |
-|------|-------|--------|
-| Performance Baseline | 5/10 | ✓ Cache TTL 1800s |
-| Real-Time Push | 3/10 | ✓ WebSocket exists |
-| Auth & Sovereignty | 6/10 | ✓ Exports locked |
-| Persistence & Trends | 4/10 | ✓ History tracked |
-| Export & Portability | 6/10 | ✓ 6 endpoints |
-| UX Polish | 5/10 | ✓ Command palette |
-| Observability | 4/10 | ✓ Prometheus ready |
-| Testing Depth | 5/10 | ✓ 36 tests passing |
-| Deployment & Onboard | 5/10 | ✓ systemd + install |
-| Sellability | 5/10 | ✓ Landing page live |
-
-## Docs
-
-- `OPERATOR.md` - daily use
-- `DELIVERY-dashboard-mega-app-2026-06-18.md` - delivery log
-- `ROADMAP-best-in-class.md` - roadmap
+See repository LICENSE / `pyproject.toml`.
