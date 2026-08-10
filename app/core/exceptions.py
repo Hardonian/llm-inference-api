@@ -1,4 +1,5 @@
 """Custom exceptions for LLM Inference API."""
+
 from typing import Any, Dict, Optional
 
 
@@ -22,7 +23,9 @@ class LLMInferenceError(Exception):
 class OllamaConnectionError(LLMInferenceError):
     """Raised when Ollama connection fails."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None, instance: str = "unknown"):
+    def __init__(
+        self, message: str, details: Optional[Dict[str, Any]] = None, instance: str = "unknown"
+    ):
         super().__init__(
             message,
             status_code=503,

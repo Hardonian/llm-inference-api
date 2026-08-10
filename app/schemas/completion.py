@@ -1,4 +1,5 @@
 """Pydantic models for LLM Inference API - Completion and Embedding."""
+
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
@@ -39,7 +40,7 @@ class CompletionResponse(BaseModel):
     created: int
     model: str
     choices: List[CompletionChoice]
-    usage: 'Usage'
+    usage: "Usage"
 
 
 class EmbeddingRequest(BaseModel):
@@ -60,4 +61,4 @@ class EmbeddingResponse(BaseModel):
     object: str = "list"
     data: List[EmbeddingData]
     model: str
-    usage: 'Usage'
+    usage: "Usage"

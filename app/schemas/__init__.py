@@ -1,4 +1,5 @@
 """Schema exports for LLM Inference API."""
+
 from app.schemas.chat import (
     ChatMessage,
     ChatCompletionRequest,

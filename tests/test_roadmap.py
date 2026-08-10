@@ -1,11 +1,10 @@
 """R6: Disk rescue cache TTL + history recording + trends + insights tests."""
-import json
+
 import time
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from app.main import app, _DISK_RESCUE_MEM, DASHBOARD_STATE_DIR, HISTORY_FILES, _read_list
+from app.main import app, HISTORY_FILES, _read_list
 
 
 @pytest.fixture
@@ -24,7 +23,9 @@ class TestDiskRescueCache:
         data = r1.json()
         assert isinstance(data, dict)
         # Accept any of the known response shapes
-        assert any(k in data for k in ("disks", "paths", "reclaimable_items", "total_size_gb", "timestamp"))
+        assert any(
+            k in data for k in ("disks", "paths", "reclaimable_items", "total_size_gb", "timestamp")
+        )
 
     def test_disk_rescue_cache_has_reclaimable(self, client):
         """Cache should contain a report structure."""
@@ -65,9 +66,11 @@ class TestTrendsEndpoint:
 
     def test_agent_intent_distribution(self, client):
         # Hit agent command to record history
-        client.post("/api/agent/command",
-                    json={"directive": "heal"},
-                    headers={"Authorization": "Bearer test"})
+        client.post(
+            "/api/agent/command",
+            json={"directive": "heal"},
+            headers={"Authorization": "Bearer test"},
+        )
         r = client.get("/api/trends")
         data = r.json()
         agents = data["trends"].get("agents", {})

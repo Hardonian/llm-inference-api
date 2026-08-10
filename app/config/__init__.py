@@ -1,4 +1,5 @@
 """Application configuration using Pydantic Settings."""
+
 from functools import lru_cache
 from typing import Dict, List, Optional
 from pydantic import Field, field_validator
@@ -7,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class OllamaInstanceConfig(BaseSettings):
     """Configuration for a single Ollama instance."""
+
     host: str = "localhost"
     port: int = 11434
     gpu_type: str = "auto"

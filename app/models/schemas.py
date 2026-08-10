@@ -1,4 +1,5 @@
 """Pydantic schemas for request/response validation."""
+
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, HttpUrl, validator
 from enum import Enum
@@ -37,10 +38,14 @@ class GenerateRequest(BaseModel):
     width: Optional[int] = Field(None, ge=64, le=2048, multiple_of=64, description="Image width")
     height: Optional[int] = Field(None, ge=64, le=2048, multiple_of=64, description="Image height")
     batch_size: Optional[int] = Field(default=1, ge=1, le=4, description="Batch size")
-    image_path: Optional[str] = Field(None, description="Uploaded image path/name for img2img, inpaint, or img2video")
-    denoise: Optional[float] = Field(default=0.55, ge=0.0, le=1.0, description="Image modification strength")
+    image_path: Optional[str] = Field(
+        None, description="Uploaded image path/name for img2img, inpaint, or img2video"
+    )
+    denoise: Optional[float] = Field(
+        default=0.55, ge=0.0, le=1.0, description="Image modification strength"
+    )
 
-    @validator('prompt')
+    @validator("prompt")
     def validate_prompt(cls, v):
         if not v or not v.strip():
             raise ValueError("Prompt cannot be empty")
@@ -117,7 +122,9 @@ class ModelType(str, Enum):
 class ModelDownloadRequest(BaseModel):
     url: HttpUrl = Field(..., description="Model URL from CivitAI or HuggingFace")
     type: ModelType = Field(..., description="Model type")
-    target_folder: Optional[str] = Field(None, description="Target folder in active ComfyUI models directory")
+    target_folder: Optional[str] = Field(
+        None, description="Target folder in active ComfyUI models directory"
+    )
     filename: Optional[str] = None
 
 

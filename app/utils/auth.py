@@ -1,10 +1,12 @@
 """Shared dashboard auth helpers."""
+
 import os
 import secrets
 from pathlib import Path
 
 DASHBOARD_STATE_DIR = Path(os.environ.get("DASHBOARD_STATE_DIR", "/home/scott/ai-lab/dashboard"))
 API_TOKEN_FILE = DASHBOARD_STATE_DIR / ".api-token"
+
 
 def get_dashboard_token() -> str:
     """Auto-generated shared-secret for the dashboard, persisted to file."""

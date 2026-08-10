@@ -4,7 +4,6 @@ Run with:
     .venv/bin/python -m pytest tests/test_endpoints.py -v
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -26,13 +25,15 @@ def client():
 @pytest.fixture
 def auth_header():
     from pathlib import Path as _P
-    tok = get_dashboard_token() or _P('/home/scott/ai-lab/dashboard/.api-token').read_text().strip()
+
+    tok = get_dashboard_token() or _P("/home/scott/ai-lab/dashboard/.api-token").read_text().strip()
     return {"Authorization": f"Bearer {tok}"}
 
 
 # ============================================================
 # PUBLIC endpoints (no auth)
 # ============================================================
+
 
 def test_health_public(client):
     r = client.get("/health")
@@ -61,6 +62,7 @@ def test_disk_rescue_public(client):
 # LOCKED endpoints (require auth)
 # ============================================================
 
+
 def test_revenue_status_locked(client):
     r = client.get("/api/revenue/status")
     assert r.status_code == 401
@@ -84,14 +86,12 @@ def test_predictions_with_auth(client, auth_header):
 
 
 def test_agent_command_with_auth(client, auth_header):
-    r = client.post("/api/agent/command", headers=auth_header,
-                    json={"directive": "check disk"})
+    r = client.post("/api/agent/command", headers=auth_header, json={"directive": "check disk"})
     assert r.status_code == 200
 
 
 def test_agent_easter_egg_with_auth(client, auth_header):
-    r = client.post("/api/agent/command", headers=auth_header,
-                    json={"directive": "god mode"})
+    r = client.post("/api/agent/command", headers=auth_header, json={"directive": "god mode"})
     assert r.status_code == 200
     data = r.json()
     assert data.get("intent") == "easter_egg"
@@ -100,6 +100,7 @@ def test_agent_easter_egg_with_auth(client, auth_header):
 # ============================================================
 # EXPORT endpoints (require auth)
 # ============================================================
+
 
 def test_revenue_export_locked(client):
     r = client.get("/api/revenue/export")
@@ -139,6 +140,7 @@ def test_predictions_export_markdown(client, auth_header):
 # TRENDS endpoint
 # ============================================================
 
+
 def test_trends_with_auth(client, auth_header):
     r = client.get("/api/trends", headers=auth_header)
     assert r.status_code == 200
@@ -150,6 +152,7 @@ def test_trends_with_auth(client, auth_header):
 # ============================================================
 # P50 endpoint
 # ============================================================
+
 
 def test_p50_with_auth(client, auth_header):
     r = client.get("/api/p50", headers=auth_header)
@@ -172,6 +175,7 @@ def test_p50_locked(client):
 # ============================================================
 # AUTH endpoints
 # ============================================================
+
 
 def test_auth_me_with_auth(client, auth_header):
     r = client.get("/api/auth/me", headers=auth_header)
@@ -198,6 +202,7 @@ def test_create_token_with_auth(client, auth_header):
 # ============================================================
 # PRODUCTIVITY / OPERATOR endpoints
 # ============================================================
+
 
 def test_apva_productivity_locked(client):
     r = client.post("/api/productivity/apva", json={"name": "smoke"})
@@ -245,15 +250,15 @@ def test_verification_record_and_latest_with_auth(client, auth_header):
 
 
 def test_ollama_route_public(client):
-    r = client.get('/api/ollama/route?task=interactive_chat')
+    r = client.get("/api/ollama/route?task=interactive_chat")
     assert r.status_code == 200
     data = r.json()
-    assert 'recommendations' in data
+    assert "recommendations" in data
 
 
 def test_ollama_status_includes_routing(client):
-    r = client.get('/ollama-status')
+    r = client.get("/ollama-status")
     assert r.status_code == 200
     data = r.json()
-    assert 'routing' in data
-    assert 'instances' in data
+    assert "routing" in data
+    assert "instances" in data

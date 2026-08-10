@@ -6,7 +6,6 @@ Run with:
 """
 
 import json
-import os
 import sys
 import tarfile
 import io
@@ -23,6 +22,7 @@ import app.main as m  # noqa: E402
 # ============================================================
 # GATE 3: AUTH hardening
 # ============================================================
+
 
 def test_dashboard_token_present():
     tok = get_dashboard_token()
@@ -48,6 +48,7 @@ def test_to_markdown_export_renders_lists():
 # GATE 5: EXPORT endpoints
 # ============================================================
 
+
 def test_workflow_pack_export_builds_tarball():
     inv = m._workflow_productize_inventory()
     if not inv.get("ready_packs"):
@@ -71,6 +72,7 @@ def test_workflow_pack_export_builds_tarball():
 # GATE 7: P50/P95 LATENCY (in-process, not via HTTP)
 # ============================================================
 
+
 def test_record_latency_and_p50():
     m._record_latency("/test/path", 0.010)
     m._record_latency("/test/path", 0.020)
@@ -85,6 +87,7 @@ def test_record_latency_and_p50():
 # GATE 12: MULTI-USER foundation
 # ============================================================
 
+
 def test_users_file_loads_with_default_user():
     users = m._load_users()
     assert any(u.get("id") == "default" for u in users)
@@ -93,7 +96,9 @@ def test_users_file_loads_with_default_user():
 def test_tokens_persistence_roundtrip():
     m._save_tokens([])
     assert m._load_tokens() == []
-    m._save_tokens([{"id": "x", "token": "y", "user_id": "default", "scopes": ["dashboard"], "created_at": 0}])
+    m._save_tokens(
+        [{"id": "x", "token": "y", "user_id": "default", "scopes": ["dashboard"], "created_at": 0}]
+    )
     assert len(m._load_tokens()) == 1
     m._save_tokens([])  # cleanup
 
@@ -101,6 +106,7 @@ def test_tokens_persistence_roundtrip():
 # ============================================================
 # GATE 1: PERF / cache helpers
 # ============================================================
+
 
 def test_disk_rescue_cache_helper_shape():
     """Smoke check that _disk_rescue_report returns expected keys (without forcing a heavy scan)."""
@@ -117,6 +123,7 @@ def test_disk_rescue_cache_helper_shape():
 # ============================================================
 # GATE 10: SELLABILITY / money paths
 # ============================================================
+
 
 def test_money_paths_have_required_fields():
     paths = m._default_money_paths()
@@ -141,6 +148,7 @@ def test_revenue_dashboard_has_overall_readiness():
 # GATE 8: PREDICTIONS
 # ============================================================
 
+
 def test_predictive_monitoring_has_predictions():
     pred = m._predictive_monitoring()
     assert "predictions" in pred
@@ -151,6 +159,7 @@ def test_predictive_monitoring_has_predictions():
 # GATE 5: DEMO mode override
 # ============================================================
 
+
 def test_demo_override_requires_env(monkeypatch):
     monkeypatch.delenv("DEMO_MODE", raising=False)
     base = {"services": [{"name": "x", "ok": True}], "disk": {"paths": []}}
@@ -159,7 +168,10 @@ def test_demo_override_requires_env(monkeypatch):
 
 def test_demo_override_replaces_with_fakes(monkeypatch):
     monkeypatch.setenv("DEMO_MODE", "true")
-    base = {"services": [{"name": "x", "ok": False}], "disk": {"paths": [{"path": "/", "percent": 99}]}}
+    base = {
+        "services": [{"name": "x", "ok": False}],
+        "disk": {"paths": [{"path": "/", "percent": 99}]},
+    }
     out = m._maybe_demo_override(base)
     assert out["demo_mode"] is True
     assert out["services"][0]["ok"] is True
@@ -170,6 +182,7 @@ def test_demo_override_replaces_with_fakes(monkeypatch):
 # ============================================================
 # GATE 2: TRENDS / HISTORY
 # ============================================================
+
 
 def test_history_record_and_read():
     m._record_history("revenue", {"overall_readiness": 75})
@@ -194,5 +207,6 @@ def test_revenue_export_csv_format():
 
 def test_revenue_export_pdf_endpoint_locked():
     import httpx
+
     r = httpx.get("http://127.0.0.1:8000/api/revenue/export.pdf", timeout=5.0)
     assert r.status_code in (401, 501)

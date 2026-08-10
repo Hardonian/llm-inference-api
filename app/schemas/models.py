@@ -1,4 +1,5 @@
 """Pydantic models for LLM Inference API - Models and Health."""
+
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 

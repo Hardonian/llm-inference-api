@@ -1,4 +1,5 @@
 """Rate limiting middleware using Redis."""
+
 import logging
 import time
 from typing import Optional
@@ -158,6 +159,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if not allowed:
             from fastapi.responses import JSONResponse
+
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={"detail": "Rate limit exceeded", "error_code": "RATE_LIMIT_EXCEEDED"},

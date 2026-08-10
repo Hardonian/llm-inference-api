@@ -1,4 +1,5 @@
 """Logging configuration using structlog."""
+
 import logging
 import sys
 from typing import Any
