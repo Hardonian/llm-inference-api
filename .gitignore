@@ -32,4 +32,6 @@ terraform.tfvars
 Thumbs.db
 
 # Logs
+*.log.pytest_cache/
+.pytest_cache/
 *.log
