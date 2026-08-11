@@ -1,9 +1,9 @@
 """ComfyUI integration service."""
+
 import os
 import json
 import time
 import httpx
-import asyncio
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import logging
@@ -68,15 +68,17 @@ class ComfyUIService:
                     input_def = node_info.get("input", {}).get("required", {})
                     for input_name, spec in input_def.items():
                         if isinstance(spec, list) and spec and spec[0] in ["STRING", "COMBO"]:
-                            if "ckpt_name" in input_name or "model_name" in input_name or "lora_name" in input_name:
+                            if (
+                                "ckpt_name" in input_name
+                                or "model_name" in input_name
+                                or "lora_name" in input_name
+                            ):
                                 options = spec[1] if len(spec) > 1 else []
                                 for opt in options:
                                     if isinstance(opt, str):
-                                        models.append({
-                                            "name": opt,
-                                            "type": class_type,
-                                            "source": "comfyui"
-                                        })
+                                        models.append(
+                                            {"name": opt, "type": class_type, "source": "comfyui"}
+                                        )
             return models
         except Exception as e:
             logger.error(f"Failed to list models: {e}")
@@ -105,17 +107,21 @@ class ComfyUIService:
                 for file_path in path.rglob("*"):
                     if file_path.is_file() and not file_path.name.startswith("."):
                         stat = file_path.stat()
-                        models.append({
-                            "name": file_path.name,
-                            "type": mtype,
-                            "size": self._format_size(stat.st_size),
-                            "size_bytes": stat.st_size,
-                            "path": str(file_path.relative_to(COMFYUI_MODELS_DIR)),
-                            "downloaded_at": int(stat.st_mtime),
-                        })
+                        models.append(
+                            {
+                                "name": file_path.name,
+                                "type": mtype,
+                                "size": self._format_size(stat.st_size),
+                                "size_bytes": stat.st_size,
+                                "path": str(file_path.relative_to(COMFYUI_MODELS_DIR)),
+                                "downloaded_at": int(stat.st_mtime),
+                            }
+                        )
         return models
 
-    async def download_model(self, url: str, model_type: str, target_folder: Optional[str] = None) -> Dict[str, Any]:
+    async def download_model(
+        self, url: str, model_type: str, target_folder: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Download a model from URL to the active ComfyUI models directory."""
         folder_by_type = {
             "checkpoint": "checkpoints",
@@ -129,7 +135,13 @@ class ComfyUIService:
             "clip": "clip",
             "clip_vision": "clip_vision",
         }
-        allowed_folders = set(folder_by_type.values()) | {"diffusion_models", "text_encoders", "clip", "clip_vision", "unet"}
+        allowed_folders = set(folder_by_type.values()) | {
+            "diffusion_models",
+            "text_encoders",
+            "clip",
+            "clip_vision",
+            "unet",
+        }
         target_folder = target_folder or folder_by_type.get(model_type, "checkpoints")
         if target_folder not in allowed_folders:
             raise ValueError(f"Invalid target folder: {target_folder}")
@@ -167,7 +179,7 @@ class ComfyUIService:
         }
 
     def _format_size(self, bytes_val: int) -> str:
-        for unit in ['B', 'KB', 'MB', 'GB']:
+        for unit in ["B", "KB", "MB", "GB"]:
             if bytes_val < 1024:
                 return f"{bytes_val:.1f}{unit}"
             bytes_val /= 1024
@@ -218,18 +230,24 @@ class ComfyUIService:
                     with open(file_path) as f:
                         wf = json.load(f)
                     stat = file_path.stat()
-                    api_graph = wf.get("api_workflow") if isinstance(wf.get("api_workflow"), dict) else wf
-                    node_count = len(api_graph) if isinstance(api_graph, dict) else len(wf.get("nodes", []))
-                    workflows.append({
-                        "id": file_path.stem,
-                        "name": wf.get("name", file_path.stem),
-                        "nodes": node_count,
-                        "node_count": node_count,
-                        "updated": int(stat.st_mtime),
-                        "description": wf.get("description", ""),
-                        "tags": wf.get("tags", []),
-                        "is_mature": wf.get("is_mature", False),
-                    })
+                    api_graph = (
+                        wf.get("api_workflow") if isinstance(wf.get("api_workflow"), dict) else wf
+                    )
+                    node_count = (
+                        len(api_graph) if isinstance(api_graph, dict) else len(wf.get("nodes", []))
+                    )
+                    workflows.append(
+                        {
+                            "id": file_path.stem,
+                            "name": wf.get("name", file_path.stem),
+                            "nodes": node_count,
+                            "node_count": node_count,
+                            "updated": int(stat.st_mtime),
+                            "description": wf.get("description", ""),
+                            "tags": wf.get("tags", []),
+                            "is_mature": wf.get("is_mature", False),
+                        }
+                    )
                 except Exception:
                     pass
         return workflows
@@ -267,7 +285,11 @@ class ComfyUIService:
     async def queue_workflow(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
         """Queue a workflow to ComfyUI."""
         try:
-            prompt = workflow.get("api_workflow") if isinstance(workflow.get("api_workflow"), dict) else workflow
+            prompt = (
+                workflow.get("api_workflow")
+                if isinstance(workflow.get("api_workflow"), dict)
+                else workflow
+            )
             resp = await self.client.post("/prompt", json={"prompt": prompt})
             resp.raise_for_status()
             return resp.json()

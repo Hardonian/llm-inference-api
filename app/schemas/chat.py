@@ -1,4 +1,5 @@
 """Pydantic models for LLM Inference API - Chat and Completion."""
+
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 from enum import Enum

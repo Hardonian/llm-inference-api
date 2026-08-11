@@ -1,4 +1,5 @@
 """Authentication and authorization middleware."""
+
 import time
 from typing import Optional
 
@@ -7,7 +8,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import settings
-from app.core.exceptions import AuthenticationError, AuthorizationError
+from app.core.exceptions import AuthenticationError
 
 
 security = HTTPBearer(auto_error=False)
@@ -62,8 +63,14 @@ async def get_current_user_optional(
     # Shared dashboard token (auto-generated)
     try:
         from app.utils.auth import get_dashboard_token as _gdt
+
         if token == _gdt():
-            payload = {"sub": "default", "name": "Scott", "scopes": ["admin", "dashboard"], "auth_mode": "shared_token"}
+            payload = {
+                "sub": "default",
+                "name": "Scott",
+                "scopes": ["admin", "dashboard"],
+                "auth_mode": "shared_token",
+            }
             request.state.user = payload
             return payload
     except Exception:

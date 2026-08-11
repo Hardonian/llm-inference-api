@@ -26,11 +26,7 @@ def _verify_signature(payload: bytes, signature: str) -> bool:
     if not STRIPE_WEBHOOK_SECRET:
         return True  # Allow in demo mode
     try:
-        expected = hmac.new(
-            STRIPE_WEBHOOK_SECRET.encode(),
-            payload,
-            hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(STRIPE_WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(signature, f"v1={expected}")
     except Exception:
         return False

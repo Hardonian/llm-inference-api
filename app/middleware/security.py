@@ -1,4 +1,5 @@
 """Security middleware for headers, audit logging, and threat protection."""
+
 import time
 import uuid
 from typing import Callable, Optional
@@ -106,8 +107,12 @@ PUBLIC_PATHS = {
 
 # Paths that require admin role
 ADMIN_PATHS = {
-    "/api/security/", "/api/comfy/download", "/api/comfy/install-node",
-    "/api/gpu/", "/api/process/", "/api/security/",
+    "/api/security/",
+    "/api/comfy/download",
+    "/api/comfy/install-node",
+    "/api/gpu/",
+    "/api/process/",
+    "/api/security/",
 }
 
 
@@ -122,7 +127,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         request_id = str(uuid.uuid4())[:8]
         request.state.request_id = request_id
-        
+
         # Allow WebSocket upgrade requests to pass through without auth check
         # Auth will be validated in the WebSocket handler itself
         if request.headers.get("upgrade", "").lower() == "websocket":
@@ -150,8 +155,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 return True
             return False
 
-        public_dashboard_read = request.method == "GET" and path.startswith("/api/gpu/") and path.endswith("/processes")
-        if self.enable_auth and not public_dashboard_read and not any(_is_public(p) for p in PUBLIC_PATHS):
+        public_dashboard_read = (
+            request.method == "GET" and path.startswith("/api/gpu/") and path.endswith("/processes")
+        )
+        if (
+            self.enable_auth
+            and not public_dashboard_read
+            and not any(_is_public(p) for p in PUBLIC_PATHS)
+        ):
             auth_header = request.headers.get("Authorization", "")
             if not auth_header.startswith("Bearer "):
                 return JSONResponse(
@@ -162,12 +173,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             token = auth_header[7:].strip()
             try:
                 from app.utils.auth import get_dashboard_token as _gdt
+
                 _dash_tok = _gdt()
                 if token == _dash_tok:
                     pass
                 else:
                     import jwt as _jwt
                     from app.config import settings as _settings
+
                     _jwt.decode(token, _settings.secret_key, algorithms=[_settings.algorithm])
             except Exception as _exc:
                 return JSONResponse(
@@ -176,7 +189,9 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 )
 
         content_length = request.headers.get("Content-Length")
-        max_request_bytes = 30 * 1024 * 1024 * 1024 if path.startswith("/api/upload") else 10 * 1024 * 1024
+        max_request_bytes = (
+            30 * 1024 * 1024 * 1024 if path.startswith("/api/upload") else 10 * 1024 * 1024
+        )
         if content_length and int(content_length) > max_request_bytes:
             return JSONResponse(
                 status_code=413,
@@ -200,7 +215,9 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
         return response
 
-    async def _audit_log(self, request: Request, response: Response, duration: float, request_id: str):
+    async def _audit_log(
+        self, request: Request, response: Response, duration: float, request_id: str
+    ):
         path = request.url.path
         method = request.method
         status = response.status_code
@@ -246,8 +263,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if len(self.ip_buckets) > 10000:
             self.ip_buckets = {
-                k: v for k, v in self.ip_buckets.items()
-                if v["minute"] >= minute - 2
+                k: v for k, v in self.ip_buckets.items() if v["minute"] >= minute - 2
             }
 
         bucket_key = f"{client_ip}:{minute}"
@@ -310,6 +326,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Request-ID, X-Tenant-ID"
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Content-Type, Authorization, X-Request-ID, X-Tenant-ID"
+            )
 
         return response

@@ -1,4 +1,5 @@
 """Security service for threat detection, audit logging, and security monitoring."""
+
 import os
 import json
 import time
@@ -6,7 +7,6 @@ import hashlib
 import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-from datetime import datetime, timedelta
 import re
 
 logger = logging.getLogger("security_svc")
@@ -139,7 +139,7 @@ class SecurityService:
                         "severity": SEVERITY_SCORES.get(category, 5),
                         "timestamp": int(time.time()),
                         "source": source,
-                        "context": lower_text[max(0, match.start()-50):match.end()+50],
+                        "context": lower_text[max(0, match.start() - 50) : match.end() + 50],
                     }
                     threats.append(threat)
                     self.threats.append(threat)
@@ -207,7 +207,9 @@ class SecurityService:
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
 
-    def get_audit_logs(self, limit: int = 100, since: Optional[int] = None, level: Optional[str] = None) -> List[Dict]:
+    def get_audit_logs(
+        self, limit: int = 100, since: Optional[int] = None, level: Optional[str] = None
+    ) -> List[Dict]:
         """Get audit logs."""
         logs = []
         try:

@@ -45,6 +45,7 @@ def _disable_rate_limit():
 def auth_token():
     """Dashboard token used by auth-required contract tests."""
     from app.utils.auth import get_dashboard_token
+
     return get_dashboard_token()
 
 

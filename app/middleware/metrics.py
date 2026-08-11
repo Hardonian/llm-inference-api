@@ -1,4 +1,5 @@
 """Prometheus metrics middleware."""
+
 import logging
 import time
 from typing import Callable
@@ -157,7 +158,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
 
             return response
 
-        except Exception as e:
+        except Exception:
             duration = time.time() - start_time
             http_requests_total.labels(
                 method=method,

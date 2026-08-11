@@ -1,4 +1,5 @@
 """Usage tracking for LLM API requests."""
+
 import time
 from typing import Optional
 import redis.asyncio as redis

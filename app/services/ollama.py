@@ -1,20 +1,19 @@
 """Ollama integration for LLM Inference API."""
-import asyncio
+
 import logging
 import time
 from typing import Any, AsyncGenerator, Dict, Optional
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import settings
-from app.core.exceptions import InferenceError, ModelNotAvailableError, ModelNotFoundError, OllamaConnectionError
+from app.core.exceptions import ModelNotAvailableError, ModelNotFoundError
 
 logger = logging.getLogger(__name__)
 
 
 class OllamaClient:
     """Async client for a single Ollama instance."""
-    
+
     def __init__(self, instance_config):
         self.config = instance_config
         self.base_url = instance_config.base_url
@@ -53,7 +52,11 @@ class OllamaClient:
     async def get_models(self, force_refresh: bool = False) -> list[str]:
         """Get list of available models."""
         now = time.time()
-        if not force_refresh and self._models_cache and (now - self._models_cache_time) < self._models_cache_ttl:
+        if (
+            not force_refresh
+            and self._models_cache
+            and (now - self._models_cache_time) < self._models_cache_ttl
+        ):
             return self._models_cache
 
         try:
@@ -104,7 +107,9 @@ class OllamaClient:
                 if line.strip():
                     yield {"line": line}
 
-    async def chat_stream(self, model: str, messages: list[dict]) -> AsyncGenerator[Dict[str, Any], None]:
+    async def chat_stream(
+        self, model: str, messages: list[dict]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """Stream chat completion."""
         payload = {"model": model, "messages": messages, "stream": True}
         async with self.client.stream("POST", "/api/chat", json=payload) as response:
@@ -145,19 +150,19 @@ class OllamaManager:
     async def find_instance_for_model(self, model: str) -> Optional[OllamaClient]:
         """Find the right instance for a given model."""
         routing = settings.model_to_gpu_mapping
-        
+
         # By priority, check the assigned instance first
         gpu_type = routing.get(model)
         if gpu_type and gpu_type in self.clients:
             client = self.clients[gpu_type]
             if await client.has_model(model):
                 return client
-        
+
         # Auto fallback: search all instances
         for name, client in self.clients.items():
             if await client.has_model(model):
                 return client
-        
+
         # Special handling: check if model is actually on the mapped instance
         if gpu_type and gpu_type in self.clients:
             client = self.clients[gpu_type]
@@ -171,7 +176,7 @@ class OllamaManager:
         # Check assigned instance first
         routing = settings.model_to_gpu_mapping
         gpu_type = routing.get(model)
-        
+
         if gpu_type and gpu_type in self.clients:
             client = self.clients[gpu_type]
             if await client.has_model(model):
@@ -182,7 +187,7 @@ class OllamaManager:
         for name, client in self.clients.items():
             if await client.has_model(model):
                 return
-        
+
         raise ModelNotFoundError(model)
 
     async def close(self) -> None:
